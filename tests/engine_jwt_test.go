@@ -146,6 +146,8 @@ func TestEngineJWKSCache(t *testing.T) {
 	now := time.Now().Add(5 * time.Minute).Unix()
 	tok := signJWT(t, priv, kid, jwt.MapClaims{"iss": "i", "aud": "a", "sub": "u", "exp": now})
 	_, _ = e.Verify(context.Background(), tok)
+	// Allow ristretto async writes to settle before the second call.
+	time.Sleep(50 * time.Millisecond)
 	_, _ = e.Verify(context.Background(), tok)
 	if jwksHits != 1 {
 		t.Fatalf("expected 1 jwks hit, got %d", jwksHits)

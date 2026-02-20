@@ -19,4 +19,7 @@ type Provider interface {
 
 	// LoadFromURL loads/replaces the current key set from a JWKS URL.
 	LoadFromURL(ctx context.Context, jwksURL string) error
+
+	// Keys returns a snapshot (shallow copy) of all currently held kid->key pairs.
+	Keys() map[string]any
 }

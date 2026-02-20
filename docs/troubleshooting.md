@@ -227,8 +227,8 @@ fmt.Println("JWKS:", string(body))
 | `lua policy violation` | `ErrLuaPolicy` | Lua script rejected the token |
 | `basic auth failed` | `ErrBasicAuthFailed` | Basic auth credentials invalid |
 | `invalid credentials` | `basic.ErrInvalidCredentials` | Username/password mismatch |
-| `audience blocked: X` | `ErrAudienceBlocked` | Token audience X is in the blocklist |
-| `audience not allowed: ...` | `ErrAudienceNotAllowed` | Token audience doesn't satisfy AnyOf/AllOf rules |
+| `audience blocked` | `ErrAudienceBlocked` | A token audience is in the blocklist |
+| `audience not allowed` | `ErrAudienceNotAllowed` | Token audience doesn't satisfy AnyOf/AllOf rules |
 | `audience missing` | `ErrAudienceMissing` | Token has no audience claim (when required) |
 | `missing required metadata: X` | `ErrMissingRequiredMetadata` | Required header/metadata X is missing or empty |
 

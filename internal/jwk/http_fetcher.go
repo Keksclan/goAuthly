@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -48,6 +49,33 @@ func (p *HTTPProvider) GetKey(ctx context.Context, kid string) (any, error) {
 	}
 }
 
+func (p *HTTPProvider) Keys() map[string]any {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if p.jwksSet == nil {
+		return nil
+	}
+
+	result := make(map[string]any, p.jwksSet.Len())
+	for i := range p.jwksSet.Len() {
+		key, ok := p.jwksSet.Key(i)
+		if !ok {
+			continue
+		}
+		kid := key.KeyID()
+		if kid == "" {
+			continue
+		}
+		var rawKey any
+		if err := key.Raw(&rawKey); err != nil {
+			continue
+		}
+		result[kid] = rawKey
+	}
+	return result
+}
+
 func (p *HTTPProvider) LoadFromURL(ctx context.Context, jwksURL string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, nil)
 	if err != nil {
@@ -64,7 +92,7 @@ func (p *HTTPProvider) LoadFromURL(ctx context.Context, jwksURL string) error {
 		return fmt.Errorf("failed to fetch JWKS: status %d", resp.StatusCode)
 	}
 
-	set, err := jwk.ParseReader(resp.Body)
+	set, err := jwk.ParseReader(io.LimitReader(resp.Body, maxJWKSResponseSize))
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidJWKS, err)
 	}

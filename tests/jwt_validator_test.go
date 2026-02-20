@@ -27,6 +27,14 @@ func (m *mockKeyProvider) GetKey(ctx context.Context, kid string) (any, error) {
 
 func (m *mockKeyProvider) LoadFromURL(ctx context.Context, url string) error { return nil }
 
+func (m *mockKeyProvider) Keys() map[string]any {
+	cp := make(map[string]any, len(m.keys))
+	for k, v := range m.keys {
+		cp[k] = v
+	}
+	return cp
+}
+
 func TestJWTValidator(t *testing.T) {
 	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pubKey := &privKey.PublicKey
@@ -99,7 +107,7 @@ func TestJWTValidator(t *testing.T) {
 			}, privKey, gojwt.SigningMethodRS256, kid),
 			config:      oauthjwt.Config{Issuer: issuer, Audience: audience},
 			wantErr:     true,
-			errContains: "invalid issuer",
+			errContains: "token issuer mismatch",
 		},
 		{
 			name: "Expired token",
@@ -135,7 +143,7 @@ func TestJWTValidator(t *testing.T) {
 			}, privKey, gojwt.SigningMethodRS256, kid),
 			config:      oauthjwt.Config{Issuer: issuer, Audience: audience, AllowedAlgs: []string{"ES256"}},
 			wantErr:     true,
-			errContains: "unsupported algorithm",
+			errContains: "signing method",
 		},
 	}
 
