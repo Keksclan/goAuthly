@@ -99,7 +99,7 @@ func TestJWTValidator(t *testing.T) {
 			}, privKey, gojwt.SigningMethodRS256, kid),
 			config:      oauthjwt.Config{Issuer: issuer, Audience: audience},
 			wantErr:     true,
-			errContains: "invalid issuer",
+			errContains: "token issuer mismatch",
 		},
 		{
 			name: "Expired token",
@@ -135,7 +135,7 @@ func TestJWTValidator(t *testing.T) {
 			}, privKey, gojwt.SigningMethodRS256, kid),
 			config:      oauthjwt.Config{Issuer: issuer, Audience: audience, AllowedAlgs: []string{"ES256"}},
 			wantErr:     true,
-			errContains: "unsupported algorithm",
+			errContains: "signing method",
 		},
 	}
 

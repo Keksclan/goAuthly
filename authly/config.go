@@ -67,6 +67,15 @@ type OAuth2Config struct {
 	Introspection         IntrospectionConfig
 	IntrospectionCacheTTL time.Duration
 
+	// ClockSkew is the maximum allowed time difference for exp, nbf, and iat
+	// validation. Default is 30 seconds if zero.
+	ClockSkew time.Duration
+
+	// HighThroughput enables throughput-optimised JWT validation.
+	// When true the validator precomputes more structures and uses object
+	// pooling to reduce per-request allocations. Default is false.
+	HighThroughput bool
+
 	// Opaque controls opaque-token specific semantics.
 	Opaque OpaquePolicy
 }

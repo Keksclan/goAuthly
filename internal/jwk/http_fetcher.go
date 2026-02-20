@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -64,7 +65,7 @@ func (p *HTTPProvider) LoadFromURL(ctx context.Context, jwksURL string) error {
 		return fmt.Errorf("failed to fetch JWKS: status %d", resp.StatusCode)
 	}
 
-	set, err := jwk.ParseReader(resp.Body)
+	set, err := jwk.ParseReader(io.LimitReader(resp.Body, maxJWKSResponseSize))
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidJWKS, err)
 	}
