@@ -93,7 +93,10 @@ func (m *Manager) GetKey(ctx context.Context, jwksURL, kid string) (any, error) 
 		return m.fetchSet(ctx, jwksURL)
 	})
 	if fetchErr == nil {
-		set := result.(jwk.Set)
+		set, ok := result.(jwk.Set)
+		if !ok {
+			return nil, fmt.Errorf("unexpected singleflight result type")
+		}
 		// store fresh and stale
 		m.cache.Set(freshKey, set, 1, m.ttl)
 		// keep stale longer (4x TTL, minimum 1h)
