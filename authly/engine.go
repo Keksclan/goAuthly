@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,6 +33,7 @@ const (
 // Concurrency: Result is immutable once returned.
 type Result struct {
 	Type      TokenType
+	Source    string // "jwt" or "introspection"
 	Subject   string
 	Actor     *ActorInfo
 	Scopes    []string
@@ -38,6 +41,12 @@ type Result struct {
 	Claims    map[string]any
 	RawToken  string
 }
+
+// IsJWT reports whether the result originated from a JWT verification.
+func (r *Result) IsJWT() bool { return r != nil && r.Type == TokenTypeJWT }
+
+// IsOpaque reports whether the result originated from an opaque token introspection.
+func (r *Result) IsOpaque() bool { return r != nil && r.Type == TokenTypeOpaque }
 
 // Engine verifies tokens according to the provided Config.
 //
@@ -134,6 +143,69 @@ func New(cfg Config, opts ...Option) (*Engine, error) {
 
 // Verify verifies the provided token according to the configured OAuth2 mode.
 // It returns a populated Result on success.
+// tokenVerifier defines a common interface for specific token verifiers.
+type tokenVerifier interface {
+	Verify(ctx context.Context, token string) (*verificationResult, error)
+}
+
+type verificationResult struct {
+	tokenType TokenType
+	source    string
+	subject   string
+	scopes    []string
+	expiresAt time.Time
+	claims    map[string]any
+}
+
+// jwtVerifier verifies JWT tokens.
+type jwtVerifier struct{ e *Engine }
+
+func (v *jwtVerifier) Verify(ctx context.Context, token string) (*verificationResult, error) {
+	claims, err := v.e.jwtValidator.Validate(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	return &verificationResult{
+		tokenType: TokenTypeJWT,
+		source:    "jwt",
+		subject:   claims.Subject,
+		scopes:    claims.Scopes,
+		expiresAt: claims.ExpiresAt,
+		claims:    claims.RawMap,
+	}, nil
+}
+
+// opaqueVerifier verifies opaque tokens via introspection.
+type opaqueVerifier struct{ e *Engine }
+
+func (v *opaqueVerifier) Verify(ctx context.Context, token string) (*verificationResult, error) {
+	ir, err := v.e.cachedIntrospect(ctx, token)
+	if v.e.cfg.OAuth2.Opaque.RequireActive {
+		// When active is required, any inactive error leads to rejection.
+		if err != nil {
+			return nil, err
+		}
+		if ir == nil || !ir.Active {
+			return nil, introspect.ErrTokenInactive
+		}
+	} else {
+		// When not required, allow proceeding even if inactive error was returned.
+		// ir may be non-nil alongside ErrTokenInactive from client.
+		if ir == nil {
+			return nil, fmt.Errorf("introspection response missing")
+		}
+	}
+	claims := v.e.introspectionToClaims(ir)
+	return &verificationResult{
+		tokenType: TokenTypeOpaque,
+		source:    "introspection",
+		subject:   ir.Sub,
+		scopes:    strings.Fields(ir.Scope),
+		expiresAt: time.Unix(ir.Exp, 0),
+		claims:    claims,
+	}, nil
+}
+
 func (e *Engine) Verify(ctx context.Context, token string) (*Result, error) {
 	if e.cfg.Mode == AuthModeBasic {
 		return nil, ErrUnsupportedMode
@@ -143,76 +215,59 @@ func (e *Engine) Verify(ctx context.Context, token string) (*Result, error) {
 	}
 
 	looksJWT := strings.Count(token, ".") == 2
+	var v tokenVerifier
 	switch e.cfg.OAuth2.Mode {
 	case OAuth2JWTOnly:
 		if !looksJWT {
 			return nil, ErrInvalidToken
 		}
-		return e.verifyJWT(ctx, token)
+		v = &jwtVerifier{e: e}
 	case OAuth2OpaqueOnly:
 		if looksJWT {
 			return nil, ErrInvalidToken
 		}
-		return e.verifyOpaque(ctx, token)
+		v = &opaqueVerifier{e: e}
 	case OAuth2JWTAndOpaque:
 		if looksJWT {
-			return e.verifyJWT(ctx, token)
+			v = &jwtVerifier{e: e}
+		} else {
+			v = &opaqueVerifier{e: e}
 		}
-		return e.verifyOpaque(ctx, token)
 	default:
 		return nil, ErrUnsupportedMode
 	}
-}
 
-func (e *Engine) verifyJWT(ctx context.Context, token string) (*Result, error) {
-	claims, err := e.jwtValidator.Validate(ctx, token)
+	vr, err := v.Verify(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	// Policies
-	if err := e.cfg.Policies.TokenClaims.Validate(claims.RawMap); err != nil {
-		return nil, err
-	}
-	actor, err := e.cfg.Policies.Actor.ExtractAndValidate(claims.RawMap)
-	if err != nil {
-		return nil, err
-	}
-	res := &Result{
-		Type:      TokenTypeJWT,
-		Subject:   claims.Subject,
-		Actor:     actor,
-		Scopes:    claims.Scopes,
-		ExpiresAt: claims.ExpiresAt,
-		Claims:    claims.RawMap,
-	}
-	if e.keepRawToken {
-		res.RawToken = token
-	}
-	return res, nil
-}
 
-func (e *Engine) verifyOpaque(ctx context.Context, token string) (*Result, error) {
-	intro, err := e.cachedIntrospect(ctx, token)
-	if err != nil {
-		return nil, err
+	// Apply claim policies (type-aware with backward compatibility).
+	pol := e.selectClaimPolicy(vr.tokenType)
+	if len(pol.ApplyTo) == 0 || slices.Contains(pol.ApplyTo, vr.tokenType) {
+		if err := pol.Validate(vr.claims); err != nil {
+			return nil, err
+		}
 	}
-	claims := e.introspectionToClaims(intro)
 
-	if err := e.cfg.Policies.TokenClaims.Validate(claims); err != nil {
-		return nil, err
-	}
-	actor, err := e.cfg.Policies.Actor.ExtractAndValidate(claims)
+	actor, err := e.cfg.Policies.Actor.ExtractAndValidate(vr.claims)
 	if err != nil {
 		return nil, err
+	}
+
+	// Opaque-specific post-processing: hide "active" unless configured to expose.
+	if vr.tokenType == TokenTypeOpaque && !e.cfg.OAuth2.Opaque.ExposeActiveClaim {
+		delete(vr.claims, "active")
 	}
 
 	res := &Result{
-		Type:      TokenTypeOpaque,
-		Subject:   intro.Sub,
+		Type:      vr.tokenType,
+		Source:    vr.source,
+		Subject:   vr.subject,
 		Actor:     actor,
-		Scopes:    strings.Fields(intro.Scope),
-		ExpiresAt: time.Unix(intro.Exp, 0),
-		Claims:    claims,
+		Scopes:    vr.scopes,
+		ExpiresAt: vr.expiresAt,
+		Claims:    vr.claims,
 	}
 	if e.keepRawToken {
 		res.RawToken = token
@@ -229,6 +284,11 @@ func (e *Engine) cachedIntrospect(ctx context.Context, token string) (*introspec
 	}
 	ir, err := e.introClient.Introspect(ctx, token)
 	if err != nil {
+		// If the token is inactive, the client returns both a response and ErrTokenInactive.
+		// We propagate both to let the verifier apply OpaquePolicy semantics.
+		if errors.Is(err, introspect.ErrTokenInactive) {
+			return ir, err
+		}
 		return nil, err
 	}
 	// Cache only active tokens
@@ -287,4 +347,27 @@ func (e *Engine) introspectionToClaims(ir *introspect.IntrospectionResponse) map
 		m[k] = v
 	}
 	return m
+}
+
+// selectClaimPolicy returns the effective claim policy for the given token type,
+// honoring backward compatibility with the legacy TokenClaims field.
+func (e *Engine) selectClaimPolicy(tt TokenType) ClaimPolicy {
+	switch tt {
+	case TokenTypeJWT:
+		if claimPolicyIsZero(e.cfg.Policies.JWTClaims) && !claimPolicyIsZero(e.cfg.Policies.TokenClaims) {
+			return e.cfg.Policies.TokenClaims
+		}
+		return e.cfg.Policies.JWTClaims
+	case TokenTypeOpaque:
+		if claimPolicyIsZero(e.cfg.Policies.OpaqueClaims) && !claimPolicyIsZero(e.cfg.Policies.TokenClaims) {
+			return e.cfg.Policies.TokenClaims
+		}
+		return e.cfg.Policies.OpaqueClaims
+	default:
+		return e.cfg.Policies.TokenClaims
+	}
+}
+
+func claimPolicyIsZero(p ClaimPolicy) bool {
+	return len(p.Allowlist) == 0 && len(p.Denylist) == 0 && len(p.Required) == 0 && len(p.ApplyTo) == 0 && (p.EnforcedValues == nil || len(p.EnforcedValues) == 0)
 }

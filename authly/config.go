@@ -59,6 +59,9 @@ type OAuth2Config struct {
 
 	Introspection         IntrospectionConfig
 	IntrospectionCacheTTL time.Duration
+
+	// Opaque controls opaque-token specific semantics.
+	Opaque OpaquePolicy
 }
 
 // IntrospectionConfig holds RFC 7662 endpoint settings.
@@ -69,10 +72,27 @@ type IntrospectionConfig struct {
 	Timeout      time.Duration
 }
 
+// OpaquePolicy configures RFC 7662 opaque-token semantics.
+//
+// Defaults:
+//   - RequireActive: true
+//   - ExposeActiveClaim: false
+//
+// If RequireActive is true, responses with active != true are rejected.
+// If ExposeActiveClaim is false, the "active" claim is removed before returning Result.
+type OpaquePolicy struct {
+	RequireActive     bool
+	ExposeActiveClaim bool
+}
+
 // Policies configures claim and actor validation.
 type Policies struct {
+	// Backward compatibility: TokenClaims applies to both types unless JWTClaims/OpaqueClaims override.
 	TokenClaims ClaimPolicy
-	Actor       ActorPolicy
+	// Type-specific claim policies. If empty and TokenClaims is non-empty, TokenClaims is used.
+	JWTClaims    ClaimPolicy
+	OpaqueClaims ClaimPolicy
+	Actor        ActorPolicy
 }
 
 func (c *Config) setDefaults() {
@@ -90,6 +110,11 @@ func (c *Config) setDefaults() {
 	}
 	if c.OAuth2.IntrospectionCacheTTL == 0 {
 		c.OAuth2.IntrospectionCacheTTL = 30 * time.Second
+	}
+	// Opaque defaults
+	if !c.OAuth2.Opaque.RequireActive && !c.OAuth2.Opaque.ExposeActiveClaim {
+		// Distinguish default zero-values from explicit false by setting RequireActive true when both are zero-values
+		c.OAuth2.Opaque.RequireActive = true
 	}
 	// Policies defaults are zero-values (permit all), Actor disabled by default
 	if c.Policies.Actor.ActorSubjectKey == "" {

@@ -14,6 +14,8 @@ type ClaimPolicy struct {
 	Denylist       []string
 	EnforcedValues map[string][]any
 	Required       []string
+	// ApplyTo limits the policy to specific token types. If empty, applies to all.
+	ApplyTo []TokenType
 }
 
 // Validate enforces the policy on the provided claims map.

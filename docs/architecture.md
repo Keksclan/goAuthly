@@ -83,3 +83,23 @@ flowchart LR
 - JWK Manager: fetches and caches JWKS; supports stale reads when enabled.
 - Introspection Client: calls RFC 7662 endpoint and maps extras.
 - Cache: minimal TTL cache abstraction used for JWKS and introspection.
+
+## Token Type Semantics
+
+- JWT tokens follow RFC 7519 semantics: signature verification, standard time claims, issuer/audience checks. There is no `active` concept for JWTs.
+- Opaque tokens follow RFC 7662 introspection semantics: the response must include `active` and, by default, it must be `true` to accept the token. Other fields are treated as claims.
+- The Engine now separates verification paths internally via distinct verifiers and policies per token type.
+- The `Result` exposes the token type and the source pipeline used: `Type` is `jwt` or `opaque`, and `Source` is `jwt` or `introspection`.
+- The `active` attribute exists only for opaque (introspection) and is validated internally. Unless explicitly configured to expose, it is removed from `Result.Claims` after validation.
+
+```mermaid
+flowchart TD
+    Token --> DetectType
+    DetectType -->|JWT| JWTVerifier
+    DetectType -->|Opaque| OpaqueVerifier
+    JWTVerifier --> JWTPolicies
+    OpaqueVerifier --> ActiveCheck
+    ActiveCheck --> OpaquePolicies
+    JWTPolicies --> Result
+    OpaquePolicies --> Result
+```
