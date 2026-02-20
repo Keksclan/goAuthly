@@ -54,6 +54,11 @@ type Config struct {
 // Zero-value is not usable; create via NewVerifier.
 type Verifier struct {
 	cfg Config
+	// dummyHash is a valid bcrypt hash whose cost matches the maximum cost
+	// found among configured user hashes. It is used when a looked-up user
+	// does not exist so that bcrypt.CompareHashAndPassword always runs at a
+	// realistic cost, preventing timing-based user enumeration attacks.
+	dummyHash []byte
 }
 
 // NewVerifier creates a new Basic Auth verifier from the provided Config.
@@ -70,7 +75,30 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 	if cfg.Realm == "" {
 		cfg.Realm = "Restricted"
 	}
-	return &Verifier{cfg: cfg}, nil
+
+	v := &Verifier{cfg: cfg}
+
+	// Compute a per-verifier dummy hash whose bcrypt cost matches the maximum
+	// cost among configured user hashes. This ensures that the non-existent-user
+	// path takes the same time as a real password check, preventing timing-based
+	// user enumeration even when the configured cost differs from the default.
+	if len(cfg.Users) > 0 {
+		maxCost := 10 // sensible fallback
+		for _, hashed := range cfg.Users {
+			c, err := bcrypt.Cost([]byte(hashed))
+			if err != nil {
+				continue // fall back to current maxCost on invalid hashes
+			}
+			maxCost = max(maxCost, c)
+		}
+		dh, err := bcrypt.GenerateFromPassword([]byte("dummy-password"), maxCost)
+		if err != nil {
+			return nil, fmt.Errorf("basic auth: generate dummy hash: %w", err)
+		}
+		v.dummyHash = dh
+	}
+
+	return v, nil
 }
 
 // Verify checks the provided username and password.
@@ -103,19 +131,13 @@ func (v *Verifier) verifyCustom(ctx context.Context, username, password string) 
 	return nil
 }
 
-// dummyHash is a valid bcrypt hash (cost 10) used when a user does not exist.
-// It ensures bcrypt.CompareHashAndPassword is always called, preventing
-// timing-based user enumeration attacks. The actual plaintext is irrelevant
-// because the comparison is expected to fail every time.
-var dummyHash = []byte("$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy")
-
 func (v *Verifier) verifyUsers(username, password string) error {
 	hashedPassword, exists := v.cfg.Users[username]
 	if !exists {
 		// Timing attack mitigation: always perform a bcrypt comparison even
 		// when the user does not exist, so that the response time is consistent
 		// regardless of whether the username is valid.
-		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+		_ = bcrypt.CompareHashAndPassword(v.dummyHash, []byte(password))
 		return ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password)); err != nil {
