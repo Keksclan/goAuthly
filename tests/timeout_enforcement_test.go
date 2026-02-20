@@ -29,7 +29,7 @@ func TestIntrospectDefaultTimeoutWhenZero(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err = c.Introspect(context.Background(), "tok")
+	_, err = c.Introspect(t.Context(), "tok")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -59,7 +59,7 @@ func TestIntrospectDefaultTimeoutWhenNegative(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err = c.Introspect(context.Background(), "tok")
+	_, err = c.Introspect(t.Context(), "tok")
 	elapsed := time.Since(start)
 
 	if err == nil {
