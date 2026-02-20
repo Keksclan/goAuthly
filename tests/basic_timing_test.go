@@ -65,6 +65,7 @@ func TestVerifyUsers_NoEarlyReturnBeforeBcrypt(t *testing.T) {
 	}
 
 	var found bool
+	var branchFound bool
 	ast.Inspect(f, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
 		if !ok || fn.Name.Name != "verifyUsers" {
@@ -87,6 +88,7 @@ func TestVerifyUsers_NoEarlyReturnBeforeBcrypt(t *testing.T) {
 			if !ok || ident.Name != "exists" {
 				continue
 			}
+			branchFound = true
 
 			// Walk the entire !exists block (at any depth) to find the position
 			// of the first CompareHashAndPassword call and every ReturnStmt.
@@ -122,5 +124,8 @@ func TestVerifyUsers_NoEarlyReturnBeforeBcrypt(t *testing.T) {
 
 	if !found {
 		t.Fatal("verifyUsers function not found in basic.go")
+	}
+	if !branchFound {
+		t.Fatal("!exists branch not found in verifyUsers; the timing-safe pattern may have been refactored away")
 	}
 }
