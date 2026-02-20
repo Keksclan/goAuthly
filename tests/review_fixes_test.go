@@ -173,8 +173,10 @@ func TestLuaSandbox_InfiniteLoopTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error for infinite loop")
 	}
-	if !errors.Is(err, luaengine.ErrLuaTimeout) {
-		t.Fatalf("expected ErrLuaTimeout, got: %v", err)
+	// EvaluateWithTimeout now applies both a timeout and a default instruction limit.
+	// The infinite loop may be caught by either mechanism depending on timing.
+	if !errors.Is(err, luaengine.ErrLuaTimeout) && !errors.Is(err, luaengine.ErrLuaInstructionLimit) {
+		t.Fatalf("expected ErrLuaTimeout or ErrLuaInstructionLimit, got: %v", err)
 	}
 }
 

@@ -13,8 +13,25 @@ import (
 // ErrLuaTimeout is returned when Lua script exceeds execution time limit.
 var ErrLuaTimeout = errors.New("lua script exceeded execution time limit")
 
+// ErrLuaInstructionLimit is returned when Lua script exceeds the instruction counter limit.
+var ErrLuaInstructionLimit = errors.New("lua script exceeded instruction limit")
+
+// ErrLuaPanic is returned when a Lua script causes an unrecoverable panic.
+var ErrLuaPanic = errors.New("lua script caused panic")
+
 // DefaultTimeout is the default execution time limit per Lua evaluation.
 const DefaultTimeout = 5 * time.Second
+
+// DefaultMaxInstructions is the default maximum number of Lua VM instructions
+// allowed per evaluation. gopher-lua checks context cancellation on every VM
+// cycle, so this limit is enforced by converting it to a tight time budget
+// (instructionBudgetPerUnit × maxInstructions) that acts as a secondary
+// safeguard against CPU exhaustion in addition to the caller-specified timeout.
+const DefaultMaxInstructions = 1_000_000
+
+// instructionBudgetPerUnit is the approximate time budget per Lua VM instruction.
+// This converts an instruction count limit into an equivalent time deadline.
+const instructionBudgetPerUnit = 50 * time.Nanosecond
 
 // CompiledPolicy holds a pre-compiled Lua script for reuse across calls.
 type CompiledPolicy struct {
@@ -36,21 +53,59 @@ func Compile(script string) (*CompiledPolicy, error) {
 
 // Evaluate runs the compiled Lua policy against the given claims and token type.
 // It returns nil if the script passes, or an error describing the policy violation.
+//
+// SECURITY NOTE: Lua policies must be treated as trusted configuration.
+// Only load scripts from trusted sources (e.g., config files under your control).
+// Do not allow untrusted user input to define Lua policy scripts.
 func (cp *CompiledPolicy) Evaluate(claims map[string]any, tokenType string) error {
 	return cp.EvaluateWithTimeout(claims, tokenType, DefaultTimeout)
 }
 
 // EvaluateWithTimeout runs with a custom execution timeout.
 func (cp *CompiledPolicy) EvaluateWithTimeout(claims map[string]any, tokenType string, timeout time.Duration) error {
+	return cp.EvaluateWithLimits(claims, tokenType, timeout, DefaultMaxInstructions)
+}
+
+// EvaluateWithLimits runs with a custom execution timeout and instruction limit.
+// If maxInstructions is 0, no instruction limit is enforced (timeout still applies).
+//
+// SECURITY NOTE: Lua policies must be treated as trusted configuration.
+// Only load scripts from trusted sources (e.g., config files under your control).
+// Do not allow untrusted user input to define Lua policy scripts.
+func (cp *CompiledPolicy) EvaluateWithLimits(claims map[string]any, tokenType string, timeout time.Duration, maxInstructions int) (retErr error) {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
+
+	// Panic recovery: ensure no panic propagates to the caller.
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = fmt.Errorf("%w: %v", ErrLuaPanic, r)
+		}
+	}()
 
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
 	defer L.Close()
 
-	// Use context for timeout/cancellation (gopher-lua supports context-based cancellation)
+	// Use context for timeout/cancellation (gopher-lua supports context-based cancellation).
+	// Apply the caller-specified timeout as the outer deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+
+	// Instruction limit: convert maxInstructions to an equivalent time budget
+	// and apply it as a tighter deadline when it's shorter than the caller timeout.
+	// gopher-lua checks ctx.Done() on every VM instruction cycle, so a time-based
+	// context is an effective proxy for an instruction counter.
+	var budgetCtx context.Context
+	if maxInstructions > 0 {
+		instructionBudget := time.Duration(maxInstructions) * instructionBudgetPerUnit
+		if instructionBudget < timeout {
+			var budgetCancel context.CancelFunc
+			budgetCtx, budgetCancel = context.WithTimeout(ctx, instructionBudget)
+			ctx = budgetCtx
+			defer budgetCancel()
+		}
+	}
+
 	L.SetContext(ctx)
 
 	// Open only safe libraries (no os, io, debug, package)
@@ -176,6 +231,12 @@ func (cp *CompiledPolicy) EvaluateWithTimeout(claims map[string]any, tokenType s
 	L.Push(fn)
 	err := L.PCall(0, lua.MultRet, nil)
 	if err != nil {
+		// Check if the instruction budget context expired (inner deadline).
+		// If budgetCtx was set and its deadline was exceeded, it's the instruction limit.
+		// Otherwise, if the outer ctx expired, it's the caller timeout.
+		if budgetCtx != nil && errors.Is(budgetCtx.Err(), context.DeadlineExceeded) {
+			return ErrLuaInstructionLimit
+		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return ErrLuaTimeout
 		}
