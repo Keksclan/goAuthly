@@ -15,7 +15,7 @@ import (
 // returns the same error type for both wrong-password and non-existing-user
 // scenarios and that no information leaks through different error values.
 func TestVerifyUsers_TimingAttackMitigation(t *testing.T) {
-	hash, err := bcrypt.GenerateFromPassword([]byte("correct"), 10)
+	hash, err := bcrypt.GenerateFromPassword([]byte("correct"), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatalf("bcrypt hash: %v", err)
 	}
