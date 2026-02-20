@@ -1,5 +1,7 @@
 # Roadmap
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "Big plans ahead — stay tuned!"</em></p>
+
 The planned development path for goAuthly.
 
 ## Phase 1: Foundation (Current)

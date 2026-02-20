@@ -1,5 +1,7 @@
 # Advanced Claims
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "Claims are the fine print — read them carefully!"</em></p>
+
 goAuthly's claim system goes beyond simple "is this field present?" checks. It supports declarative policies, Lua scripting, conditional enforcement, cross-claim dependencies, token-type-aware validation, and actor claim handling.
 
 ---

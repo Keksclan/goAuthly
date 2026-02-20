@@ -1,5 +1,7 @@
 # Adapters
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "One adapter per framework — keep it thin!"</em></p>
+
 goAuthly ships with thin transport adapters for **gRPC**, **Fiber**, and **fasthttp**. Each adapter does exactly three things:
 
 1. Extracts the `Authorization` header.

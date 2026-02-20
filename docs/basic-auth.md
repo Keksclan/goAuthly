@@ -1,5 +1,7 @@
 # Basic Authentication
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "bcrypt or bust — no plaintext on my watch!"</em></p>
+
 goAuthly supports HTTP Basic Authentication as a first-class verification mode. It's intentionally minimal — just enough to be secure, not enough to become a user management system.
 
 ---

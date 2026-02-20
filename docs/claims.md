@@ -1,5 +1,7 @@
 # Claims Policy Guide
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "Declare your rules — I'll enforce them!"</em></p>
+
 goAuthly provides two layers of claim validation: declarative policies and Lua scripts.
 
 ## Policy Evaluation Order

@@ -1,5 +1,7 @@
 # Troubleshooting
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "Something broke? Let's fix it together!"</em></p>
+
 When auth doesn't work, the error messages can feel cryptic. This guide covers the most common issues, what causes them, and how to fix them — without adding a logging framework to your binary.
 
 ---

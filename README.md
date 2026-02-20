@@ -6,6 +6,14 @@ Lightweight, focused token and credential verification for Go services. Supports
 
 ---
 
+<p align="center">
+  <img src="img.png" alt="Schnallbert — the goAuthly mascot" width="256" />
+  <br/>
+  <em>Meet <strong>Schnallbert</strong> — the goAuthly mascot. He guards the gate so you don't have to.</em>
+</p>
+
+---
+
 ## What goAuthly Is
 
 - A **verification-only** library — it validates tokens and credentials, nothing else.
@@ -294,6 +302,35 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. In short:
 3. Run `go test ./...` and `go vet ./...` before submitting.
 4. Keep PRs focused — one feature or fix per PR.
 5. Follow existing code style and GoDoc conventions.
+
+---
+
+## Examples
+
+Full working example applications are available in the [`examples/`](examples/) directory:
+
+| Example | Port | Description |
+|---------|------|-------------|
+| [Fiber server](examples/fiber-server/) | `:8081` | Fiber v2 with JWT, opaque token, and Basic Auth routes |
+| [fasthttp server](examples/fasthttp-server/) | `:8082` | fasthttp with JWT, opaque token, and Basic Auth routes |
+
+Each example includes a local mock JWKS and introspection server, RSA key generation at startup, and prints ready-to-use tokens to the console.
+
+### Running an example
+
+```bash
+cd examples/fiber-server
+go run .
+# or
+cd examples/fasthttp-server
+go run .
+```
+
+### gRPC
+
+There is no gRPC example in this repository. For gRPC usage, see the dedicated gRPC example project:
+
+> <https://github.com/keksclan/goAuthly-grpc-example>
 
 ---
 

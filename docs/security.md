@@ -1,5 +1,7 @@
 # Security
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "Security is not optional — it's the whole point!"</em></p>
+
 goAuthly is a verification library. It doesn't issue tokens, manage sessions, or store credentials. But verification is the front door to your service, so getting it wrong is expensive. This document covers the security model, threat mitigations, and recommended production configuration.
 
 ---

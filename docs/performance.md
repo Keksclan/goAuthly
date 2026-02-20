@@ -1,5 +1,7 @@
 # Performance
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "Fast auth means happy users — don't slow down the gate!"</em></p>
+
 goAuthly is designed for the hot path. Every request that hits your service goes through auth verification, so it needs to be fast. Here's how it works under the hood and how to tune it.
 
 ---

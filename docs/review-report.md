@@ -1,5 +1,7 @@
 # Engineering Review Report — goAuthly
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "Even bouncers get reviewed — transparency matters!"</em></p>
+
 **Date:** 2026-02-20
 **Reviewer:** Junie (automated)
 **Scope:** Correctness, Security, Performance

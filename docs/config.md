@@ -1,5 +1,7 @@
 # Configuration Guide
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "Configure once, verify forever!"</em></p>
+
 goAuthly supports multiple configuration methods: native Go structs, Lua config files, and JSON config files.
 
 ## Go Configuration (Native Struct)

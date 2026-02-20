@@ -1,5 +1,7 @@
 # Architecture
 
+<p align="center"><img src="../img.png" alt="Schnallbert" width="128" /><br/><em>Schnallbert says: "Simple pipeline, no magic — that's how I like it!"</em></p>
+
 goAuthly follows a simple, layered design: **Adapters → Engine → Verifiers → Policies → Result**.
 
 There are no plugin registries, no abstract factory chains, no middleware-of-middleware. Just a clean pipeline that takes credentials in and hands a decision out.
