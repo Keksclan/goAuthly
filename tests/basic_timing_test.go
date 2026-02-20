@@ -88,28 +88,33 @@ func TestVerifyUsers_NoEarlyReturnBeforeBcrypt(t *testing.T) {
 				continue
 			}
 
-			// Inside the !exists block, verify CompareHashAndPassword is called
-			// before any return statement.
-			bcryptCalled := false
-			for _, s := range ifStmt.Body.List {
-				ast.Inspect(s, func(inner ast.Node) bool {
-					call, ok := inner.(*ast.CallExpr)
-					if !ok {
-						return true
+			// Walk the entire !exists block (at any depth) to find the position
+			// of the first CompareHashAndPassword call and every ReturnStmt.
+			// Then assert that no return appears before the bcrypt call.
+			var bcryptPos token.Pos
+			var returnPositions []token.Pos
+
+			ast.Inspect(ifStmt.Body, func(inner ast.Node) bool {
+				switch n := inner.(type) {
+				case *ast.CallExpr:
+					sel, ok := n.Fun.(*ast.SelectorExpr)
+					if ok && sel.Sel.Name == "CompareHashAndPassword" && !bcryptPos.IsValid() {
+						bcryptPos = n.Pos()
 					}
-					sel, ok := call.Fun.(*ast.SelectorExpr)
-					if ok && sel.Sel.Name == "CompareHashAndPassword" {
-						bcryptCalled = true
-					}
-					return true
-				})
-				// Check if this statement is a return — it must come after bcrypt call.
-				if _, isRet := s.(*ast.ReturnStmt); isRet && !bcryptCalled {
-					t.Error("early return found before bcrypt.CompareHashAndPassword in !exists branch")
+				case *ast.ReturnStmt:
+					returnPositions = append(returnPositions, n.Pos())
 				}
-			}
-			if !bcryptCalled {
+				return true
+			})
+
+			if !bcryptPos.IsValid() {
 				t.Error("bcrypt.CompareHashAndPassword not called in !exists branch")
+			}
+			for _, rp := range returnPositions {
+				if rp < bcryptPos {
+					t.Errorf("early return at %s before bcrypt.CompareHashAndPassword at %s",
+						fset.Position(rp), fset.Position(bcryptPos))
+				}
 			}
 		}
 		return false
