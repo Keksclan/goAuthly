@@ -26,7 +26,9 @@ All network and script execution paths enforce timeouts:
 | JWKS HTTP fetch | 5 s | `http.Client.Timeout` | Context propagation + `http.Client` deadline |
 | Introspection HTTP call | 5 s | `IntrospectionConfig.Timeout` | Context propagation + `http.Client` deadline |
 | Lua policy evaluation | 5 s | `EvaluateWithTimeout` / `EvaluateWithLimits` | `context.WithTimeout` checked on every VM instruction cycle |
-| Lua instruction limit | 1 000 000 instructions | `EvaluateWithLimits(maxInstructions)` | Converted to a time budget (`50 ns × N`) applied as an inner context deadline |
+| Lua instruction limit | 1 000 000 instructions (≈ 50 ms effective) | `EvaluateWithLimits(maxInstructions)` | Converted to a time budget (`instructionBudgetPerUnit` × `DefaultMaxInstructions` = 50 ns × 1 000 000 = **50 ms**) applied as an inner context deadline |
+
+The instruction budget of **50 ms** is far stricter than the 5 s `EvaluateWithTimeout` wall-clock timeout. In practice, `EvaluateWithLimits` (and by extension `EvaluateWithTimeout`, which delegates to it) will be preempted by the instruction budget well before the wall-clock timeout fires, making the instruction count the dominant guard for typical scripts.
 
 If a Lua script exceeds its limit, the request is **denied** with `ErrLuaTimeout` or `ErrLuaInstructionLimit`. Panics inside Lua evaluation are recovered and returned as `ErrLuaPanic`.
 

@@ -108,10 +108,14 @@ require_value("iss", "https://issuer.demo")
 		t.Fatalf("compile: %v", err)
 	}
 
+	// Use a timeout larger than the instruction budget so that the
+	// instruction-budget code path (budgetCtx) is actually exercised.
+	// DefaultMaxInstructions × instructionBudgetPerUnit = 5 s, so a 10 s
+	// timeout ensures instructionBudget < timeout.
 	err = cp.EvaluateWithLimits(
 		map[string]any{"sub": "user-1", "iss": "https://issuer.demo"},
 		"jwt",
-		5*time.Second,
+		10*time.Second,
 		luaengine.DefaultMaxInstructions,
 	)
 	if err != nil {

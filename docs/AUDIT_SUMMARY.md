@@ -41,7 +41,7 @@
 |------|----------|-------|
 | Client secrets in config structs | Low | Secrets (ClientSecret, Password) are held in memory as plain strings. No logging of these values was found, but callers must ensure configs are not serialized to logs. |
 | No rate limiting on introspection | Low | The introspection client has timeouts and response size limits but no per-endpoint rate limiting. Upstream throttling is assumed. |
-| Lua policy sandbox | Low | The Lua engine uses gopher-lua which is sandboxed by default, but custom scripts could consume CPU. The existing timeout mechanism mitigates this. |
+| Lua policy sandbox | Low | The Lua engine uses gopher-lua which is sandboxed by default, but custom scripts could consume CPU. The existing timeout mechanism mitigates this, and the PR introduces an instruction-count cap (`DefaultMaxInstructions`) which triggers `ErrLuaInstructionLimit` when exceeded, providing a second defense against CPU exhaustion by limiting executed Lua instructions. |
 | Cache eviction under memory pressure | Info | The Ristretto cache has a configurable max cost, but extremely high traffic with unique tokens could cause eviction churn. |
 
 ---

@@ -18,7 +18,7 @@ func TestPanicRecovery(t *testing.T) {
 		t.Fatalf("compile: %v", err)
 	}
 
-	cp.panicHook = func() { panic("deliberate test panic") }
+	cp.panicHook.Store(func() { panic("deliberate test panic") })
 
 	err = cp.Evaluate(map[string]any{"sub": "user-1"}, "jwt")
 	if err == nil {

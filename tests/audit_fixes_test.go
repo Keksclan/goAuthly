@@ -8,6 +8,7 @@ import (
 	"time"
 
 	gojwt "github.com/golang-jwt/jwt/v5"
+	"github.com/keksclan/goAuthly/authly"
 	oauthjwt "github.com/keksclan/goAuthly/internal/oauth/jwt"
 )
 
@@ -53,19 +54,19 @@ func TestValidatorAudienceErrorsAreSentinels(t *testing.T) {
 			name:    "blocked audience wraps ErrAudienceBlocked",
 			rule:    oauthjwt.AudienceRule{AnyAudience: true, Blocklist: []string{"evil"}},
 			aud:     []string{"evil"},
-			wantErr: oauthjwt.ErrAudienceBlocked,
+			wantErr: authly.ErrAudienceBlocked,
 		},
 		{
 			name:    "no matching anyof wraps ErrAudienceNotAllowed",
 			rule:    oauthjwt.AudienceRule{AnyOf: []string{"allowed-api"}},
 			aud:     []string{"other-api"},
-			wantErr: oauthjwt.ErrAudienceNotAllowed,
+			wantErr: authly.ErrAudienceNotAllowed,
 		},
 		{
 			name:    "missing allof wraps ErrAudienceNotAllowed",
 			rule:    oauthjwt.AudienceRule{AllOf: []string{"api", "tenant"}},
 			aud:     []string{"api"},
-			wantErr: oauthjwt.ErrAudienceNotAllowed,
+			wantErr: authly.ErrAudienceNotAllowed,
 		},
 	}
 	for _, tc := range tests {

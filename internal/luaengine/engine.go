@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -44,11 +44,11 @@ const maxInstructionBudget = 24 * time.Hour
 // CompiledPolicy holds a pre-compiled Lua script for reuse across calls.
 type CompiledPolicy struct {
 	proto *lua.FunctionProto
-	mu    sync.Mutex
 
 	// panicHook, when non-nil, is called during evaluation to allow tests
 	// to inject a deliberate panic and exercise the recover guard.
-	panicHook func()
+	// Stored as atomic.Value to avoid serialising evaluations with a mutex.
+	panicHook atomic.Value // stores func() or nil
 }
 
 // Compile parses and compiles a Lua script. The result can be reused for many Evaluate calls.
@@ -86,9 +86,6 @@ func (cp *CompiledPolicy) EvaluateWithTimeout(claims map[string]any, tokenType s
 // Only load scripts from trusted sources (e.g., config files under your control).
 // Do not allow untrusted user input to define Lua policy scripts.
 func (cp *CompiledPolicy) EvaluateWithLimits(claims map[string]any, tokenType string, timeout time.Duration, maxInstructions int) (retErr error) {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-
 	// Panic recovery: ensure no panic propagates to the caller.
 	defer func() {
 		if r := recover(); r != nil {
@@ -96,8 +93,8 @@ func (cp *CompiledPolicy) EvaluateWithLimits(claims map[string]any, tokenType st
 		}
 	}()
 
-	if cp.panicHook != nil {
-		cp.panicHook()
+	if hook, ok := cp.panicHook.Load().(func()); ok && hook != nil {
+		hook()
 	}
 
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
@@ -105,8 +102,13 @@ func (cp *CompiledPolicy) EvaluateWithLimits(claims map[string]any, tokenType st
 
 	// Use context for timeout/cancellation (gopher-lua supports context-based cancellation).
 	// Apply the caller-specified timeout as the outer deadline.
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+	outerCtx, outerCancel := context.WithTimeout(context.Background(), timeout)
+	defer outerCancel()
+
+	// vmCtx is the context passed to the Lua VM. It defaults to the outer
+	// timeout context but may be replaced by a tighter instruction-budget
+	// context below.
+	vmCtx := outerCtx
 
 	// Instruction limit: convert maxInstructions to an equivalent time budget
 	// and apply it as a tighter deadline when it's shorter than the caller timeout.
@@ -124,13 +126,13 @@ func (cp *CompiledPolicy) EvaluateWithLimits(claims map[string]any, tokenType st
 		}
 		if instructionBudget < timeout {
 			var budgetCancel context.CancelFunc
-			budgetCtx, budgetCancel = context.WithTimeout(ctx, instructionBudget)
-			ctx = budgetCtx
+			budgetCtx, budgetCancel = context.WithTimeout(outerCtx, instructionBudget)
+			vmCtx = budgetCtx
 			defer budgetCancel()
 		}
 	}
 
-	L.SetContext(ctx)
+	L.SetContext(vmCtx)
 
 	// Open only safe libraries (no os, io, debug, package)
 	openSafeLibs(L)
@@ -261,7 +263,7 @@ func (cp *CompiledPolicy) EvaluateWithLimits(claims map[string]any, tokenType st
 		if budgetCtx != nil && errors.Is(budgetCtx.Err(), context.DeadlineExceeded) {
 			return ErrLuaInstructionLimit
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if errors.Is(outerCtx.Err(), context.DeadlineExceeded) {
 			return ErrLuaTimeout
 		}
 		if policyErr != nil {

@@ -46,10 +46,10 @@ type Manager struct {
 	extraHeaders map[string]string
 	sfGroup      singleflight.Group
 
-	// fetchOverride, when non-nil, replaces fetchSet inside the singleflight
-	// closure. It exists solely as a testing seam so callers can inject a
-	// result whose dynamic type is not jwk.Set.
-	fetchOverride func(ctx context.Context, jwksURL string) (any, error)
+	// fetchFn performs the actual JWKS fetch. It is initialised to fetchSet
+	// in NewManager and can be replaced in tests to inject alternate results
+	// (e.g. a non-jwk.Set value or an error).
+	fetchFn func(ctx context.Context, jwksURL string) (any, error)
 }
 
 func (m *Manager) SetHTTPClient(c *http.Client) {
@@ -59,12 +59,16 @@ func (m *Manager) SetHTTPClient(c *http.Client) {
 }
 
 func NewManager(c cache.Cache, ttl time.Duration, allowStale bool) *Manager {
-	return &Manager{
+	m := &Manager{
 		cache:      c,
 		httpc:      &http.Client{Timeout: 5 * time.Second},
 		ttl:        ttl,
 		allowStale: allowStale,
 	}
+	m.fetchFn = func(ctx context.Context, jwksURL string) (any, error) {
+		return m.fetchSet(ctx, jwksURL)
+	}
+	return m
 }
 
 // SetAuth configures authentication for JWKS requests.
@@ -95,10 +99,7 @@ func (m *Manager) GetKey(ctx context.Context, jwksURL, kid string) (any, error) 
 				return set, nil
 			}
 		}
-		if m.fetchOverride != nil {
-			return m.fetchOverride(ctx, jwksURL)
-		}
-		return m.fetchSet(ctx, jwksURL)
+		return m.fetchFn(ctx, jwksURL)
 	})
 	if fetchErr == nil {
 		set, ok := result.(jwk.Set)

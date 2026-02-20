@@ -337,7 +337,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 			// Throughput mode: O(1) lookup via precomputed set.
 			for _, a := range tokenAud {
 				if _, ok := v.audBlockSet[a]; ok {
-					return fmt.Errorf("%w", ErrAudienceBlocked)
+					return ErrAudienceBlocked
 				}
 			}
 		} else {
@@ -345,7 +345,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 			for _, a := range tokenAud {
 				for _, blocked := range rule.Blocklist {
 					if a == blocked {
-						return fmt.Errorf("%w", ErrAudienceBlocked)
+						return ErrAudienceBlocked
 					}
 				}
 			}
@@ -374,7 +374,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 		s := lazyAudSet()
 		for _, required := range rule.AllOf {
 			if _, ok := s[required]; !ok {
-				return fmt.Errorf("%w", ErrAudienceNotAllowed)
+				return ErrAudienceNotAllowed
 			}
 		}
 	}
@@ -415,7 +415,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("%w", ErrAudienceNotAllowed)
+			return ErrAudienceNotAllowed
 		}
 	}
 

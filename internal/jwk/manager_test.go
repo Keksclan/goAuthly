@@ -17,9 +17,9 @@ func (stubCache) Del(string)                                 {}
 func TestManagerTypeAssertionSafety(t *testing.T) {
 	mgr := NewManager(stubCache{}, time.Minute, false)
 
-	// Inject a fetch override that returns a non-jwk.Set value (a plain string)
+	// Replace fetchFn with one that returns a non-jwk.Set value (a plain string)
 	// with no error, so the singleflight result triggers the type-assertion branch.
-	mgr.fetchOverride = func(_ context.Context, _ string) (any, error) {
+	mgr.fetchFn = func(_ context.Context, _ string) (any, error) {
 		return "not-a-jwk-set", nil
 	}
 
