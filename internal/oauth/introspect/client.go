@@ -17,7 +17,7 @@ var ErrTokenInactive = errors.New("token is inactive")
 // maxResponseSize limits the size of introspection HTTP responses to prevent memory bombs.
 const maxResponseSize = 1 << 20 // 1 MB
 
-// defaultTimeout is the fallback HTTP client timeout when none (or zero) is configured.
+// defaultTimeout is the fallback HTTP client timeout when none, zero, or negative is configured.
 const defaultTimeout = 5 * time.Second
 
 // TokenTransportKind selects how the token is delivered.
