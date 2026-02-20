@@ -15,13 +15,20 @@ import (
 	"github.com/keksclan/goAuthly/internal/oauth/jwt"
 )
 
+// TokenType describes the verified token kind.
 type TokenType string
 
+// Supported token types returned in Result.
 const (
-	TokenTypeJWT    TokenType = "jwt"
+	// TokenTypeJWT indicates a JWT token was verified.
+	TokenTypeJWT TokenType = "jwt"
+	// TokenTypeOpaque indicates an opaque token was introspected and verified.
 	TokenTypeOpaque TokenType = "opaque"
 )
 
+// Result contains verification output for a token.
+//
+// Concurrency: Result is immutable once returned.
 type Result struct {
 	Type      TokenType
 	Subject   string
@@ -32,6 +39,10 @@ type Result struct {
 	RawToken  string
 }
 
+// Engine verifies tokens according to the provided Config.
+//
+// Concurrency: Engine is safe for concurrent use if the provided Cache and HTTP client
+// are safe for concurrent use (the defaults are). No method mutates shared state.
 type Engine struct {
 	cfg          Config
 	httpc        *http.Client
@@ -65,6 +76,8 @@ func (a *managerProviderAdapter) LoadFromURL(ctx context.Context, url string) er
 	return nil
 }
 
+// New creates a new Engine using cfg and optional Options.
+// Security: Ensure Issuer/Audience and algorithms are set to your expectations.
 func New(cfg Config, opts ...Option) (*Engine, error) {
 	cfg.setDefaults()
 	if err := cfg.Validate(); err != nil {
@@ -119,6 +132,8 @@ func New(cfg Config, opts ...Option) (*Engine, error) {
 	return e, nil
 }
 
+// Verify verifies the provided token according to the configured OAuth2 mode.
+// It returns a populated Result on success.
 func (e *Engine) Verify(ctx context.Context, token string) (*Result, error) {
 	if e.cfg.Mode == AuthModeBasic {
 		return nil, ErrUnsupportedMode

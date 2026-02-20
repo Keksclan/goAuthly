@@ -5,27 +5,47 @@ import (
 	"time"
 )
 
+// AuthMode selects the top-level authentication mode.
+//
+// Security: Only OAuth2 is currently supported. Basic mode is reserved
+// for future work and is rejected by validation.
 type AuthMode string
 
+// Supported AuthMode values.
 const (
+	// AuthModeOAuth2 enables OAuth 2.0 style verification (JWT and/or opaque introspection).
 	AuthModeOAuth2 AuthMode = "oauth2"
-	AuthModeBasic  AuthMode = "basic"
+	// AuthModeBasic is not supported by this library and will be rejected.
+	AuthModeBasic AuthMode = "basic"
 )
 
+// OAuth2Mode specifies which OAuth2 token types are accepted.
 type OAuth2Mode string
 
+// Supported OAuth2Mode values.
 const (
-	OAuth2JWTOnly      OAuth2Mode = "jwt_only"
-	OAuth2OpaqueOnly   OAuth2Mode = "opaque_only"
+	// OAuth2JWTOnly accepts only JWT tokens.
+	OAuth2JWTOnly OAuth2Mode = "jwt_only"
+	// OAuth2OpaqueOnly accepts only opaque tokens via introspection.
+	OAuth2OpaqueOnly OAuth2Mode = "opaque_only"
+	// OAuth2JWTAndOpaque accepts both JWT and opaque tokens.
 	OAuth2JWTAndOpaque OAuth2Mode = "jwt_and_opaque"
 )
 
+// Config controls Engine behavior.
+//
+// Concurrency: Config is immutable after passing to New; do not mutate concurrently.
+// Security: Set Issuer/Audience and algorithms to enforce constraints.
 type Config struct {
 	Mode     AuthMode
 	OAuth2   OAuth2Config
 	Policies Policies
 }
 
+// OAuth2Config configures OAuth2 verification.
+//
+// JWKS caching is controlled by JWKSCacheTTL/AllowStaleJWKS.
+// Introspection responses can be cached via IntrospectionCacheTTL.
 type OAuth2Config struct {
 	Mode OAuth2Mode
 
@@ -41,6 +61,7 @@ type OAuth2Config struct {
 	IntrospectionCacheTTL time.Duration
 }
 
+// IntrospectionConfig holds RFC 7662 endpoint settings.
 type IntrospectionConfig struct {
 	Endpoint     string
 	ClientID     string
@@ -48,6 +69,7 @@ type IntrospectionConfig struct {
 	Timeout      time.Duration
 }
 
+// Policies configures claim and actor validation.
 type Policies struct {
 	TokenClaims ClaimPolicy
 	Actor       ActorPolicy
@@ -75,6 +97,7 @@ func (c *Config) setDefaults() {
 	}
 }
 
+// Validate checks Config correctness and required fields per mode.
 func (c Config) Validate() error {
 	if c.Mode == AuthModeBasic {
 		return ErrUnsupportedMode

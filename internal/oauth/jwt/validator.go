@@ -28,15 +28,23 @@ type Claims struct {
 }
 
 type Validator struct {
-	cfg  Config
-	keys jwk.Provider
+	cfg           Config
+	keys          jwk.Provider
+	allowedAlgSet map[string]struct{}
 }
 
 func New(cfg Config, keys jwk.Provider) (*Validator, error) {
-	return &Validator{
+	v := &Validator{
 		cfg:  cfg,
 		keys: keys,
-	}, nil
+	}
+	if len(cfg.AllowedAlgs) > 0 {
+		v.allowedAlgSet = make(map[string]struct{}, len(cfg.AllowedAlgs))
+		for _, alg := range cfg.AllowedAlgs {
+			v.allowedAlgSet[alg] = struct{}{}
+		}
+	}
+	return v, nil
 }
 
 func (v *Validator) Validate(ctx context.Context, tokenStr string) (*Claims, error) {
@@ -46,15 +54,8 @@ func (v *Validator) Validate(ctx context.Context, tokenStr string) (*Claims, err
 			return nil, fmt.Errorf("missing kid in header")
 		}
 
-		if len(v.cfg.AllowedAlgs) > 0 {
-			found := false
-			for _, alg := range v.cfg.AllowedAlgs {
-				if t.Method.Alg() == alg {
-					found = true
-					break
-				}
-			}
-			if !found {
+		if v.allowedAlgSet != nil {
+			if _, ok := v.allowedAlgSet[t.Method.Alg()]; !ok {
 				return nil, fmt.Errorf("unsupported algorithm: %s", t.Method.Alg())
 			}
 		}

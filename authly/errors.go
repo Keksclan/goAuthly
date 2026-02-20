@@ -2,13 +2,22 @@ package authly
 
 import "errors"
 
+// Package-level errors returned by the library.
 var (
-	ErrUnsupportedMode        = errors.New("unsupported auth mode")
-	ErrInvalidToken           = errors.New("invalid token")
-	ErrClaimMissing           = errors.New("required claim missing")
-	ErrClaimForbidden         = errors.New("claim is forbidden")
-	ErrClaimValueNotAllowed   = errors.New("claim value not allowed")
+	// ErrUnsupportedMode indicates an unsupported authentication mode was selected.
+	ErrUnsupportedMode = errors.New("unsupported auth mode")
+	// ErrInvalidToken indicates the token format doesn't match the configured mode.
+	ErrInvalidToken = errors.New("invalid token")
+	// ErrClaimMissing is returned when a required claim is not present.
+	ErrClaimMissing = errors.New("required claim missing")
+	// ErrClaimForbidden is returned when a denied claim is present.
+	ErrClaimForbidden = errors.New("claim is forbidden")
+	// ErrClaimValueNotAllowed is returned when a claim value is not in the allow-list.
+	ErrClaimValueNotAllowed = errors.New("claim value not allowed")
+	// ErrUnknownClaimNotAllowed is returned when a claim is not in the allow-list.
 	ErrUnknownClaimNotAllowed = errors.New("unknown claim not allowed")
-	ErrActorMissing           = errors.New("actor claim missing")
-	ErrActorNotAllowed        = errors.New("actor subject not allowed")
+	// ErrActorMissing is returned when the actor claim is required but missing.
+	ErrActorMissing = errors.New("actor claim missing")
+	// ErrActorNotAllowed is returned when the extracted actor subject is not allowed.
+	ErrActorNotAllowed = errors.New("actor subject not allowed")
 )

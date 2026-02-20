@@ -6,6 +6,9 @@ import (
 	"slices"
 )
 
+// ClaimPolicy validates token claims using allow/deny/required and value constraints.
+//
+// Security: Use allowlist to reject unknown/unexpected claims when feasible.
 type ClaimPolicy struct {
 	Allowlist      []string
 	Denylist       []string
@@ -13,6 +16,7 @@ type ClaimPolicy struct {
 	Required       []string
 }
 
+// Validate enforces the policy on the provided claims map.
 func (p ClaimPolicy) Validate(claims map[string]any) error {
 	// Required claims must exist
 	for _, k := range p.Required {
@@ -131,6 +135,9 @@ func toFloat64(v any) float64 {
 	}
 }
 
+// ActorPolicy configures extraction and validation of an "actor" claim
+// (aka RFC 8693 actor). When Enabled, the engine extracts the actor subject
+// and validates it against AllowedActorSubjects.
 type ActorPolicy struct {
 	Enabled bool
 
@@ -140,11 +147,13 @@ type ActorPolicy struct {
 	ActorClaimsPolicy    *ClaimPolicy
 }
 
+// ActorInfo carries extracted actor subject and claims.
 type ActorInfo struct {
 	Subject string
 	Claims  map[string]any
 }
 
+// ExtractAndValidate retrieves the actor from claims (if enabled) and validates it.
 func (ap ActorPolicy) ExtractAndValidate(claims map[string]any) (*ActorInfo, error) {
 	if !ap.Enabled {
 		return nil, nil

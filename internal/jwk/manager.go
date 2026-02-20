@@ -39,8 +39,9 @@ func (m *Manager) GetKey(ctx context.Context, jwksURL, kid string) (any, error) 
 	staleKey := "jwks:stale:" + jwksURL
 
 	if val, ok := m.cache.Get(freshKey); ok {
-		set := val.(jwk.Set)
-		return m.getKeyFromSet(set, kid)
+		if set, ok := val.(jwk.Set); ok && set != nil {
+			return m.getKeyFromSet(set, kid)
+		}
 	}
 
 	set, fetchErr := m.fetchSet(ctx, jwksURL)
@@ -50,13 +51,18 @@ func (m *Manager) GetKey(ctx context.Context, jwksURL, kid string) (any, error) 
 		// keep stale longer (4x TTL, minimum 1h)
 		staleTTL := max(m.ttl*4, time.Hour)
 		m.cache.Set(staleKey, set, 1, staleTTL)
+		// ensure visibility for immediate subsequent reads (ristretto is async)
+		if w, ok := any(m.cache).(interface{ Wait() }); ok {
+			w.Wait()
+		}
 		return m.getKeyFromSet(set, kid)
 	}
 
 	if m.allowStale {
 		if val, ok := m.cache.Get(staleKey); ok {
-			set := val.(jwk.Set)
-			return m.getKeyFromSet(set, kid)
+			if set, ok := val.(jwk.Set); ok && set != nil {
+				return m.getKeyFromSet(set, kid)
+			}
 		}
 	}
 
