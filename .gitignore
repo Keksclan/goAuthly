@@ -1,0 +1,11 @@
+/bin
+/dist
+/coverage
+*.exe
+*.out
+*.log
+vendor/
+.idea/
+.vscode/
+.DS_Store
+coverage.out
