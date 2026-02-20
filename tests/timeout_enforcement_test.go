@@ -36,8 +36,8 @@ func TestIntrospectDefaultTimeoutWhenZero(t *testing.T) {
 		t.Fatal("expected timeout error, got nil")
 	}
 	// Should have timed out around 5s, not waited the full 6s
-	if elapsed >= 6*time.Second {
-		t.Fatalf("request waited too long (%v), timeout was not enforced", elapsed)
+	if elapsed < 4*time.Second || elapsed >= 6*time.Second {
+		t.Fatalf("expected timeout around 5s, got %v", elapsed)
 	}
 }
 
@@ -66,8 +66,8 @@ func TestIntrospectDefaultTimeoutWhenNegative(t *testing.T) {
 		t.Fatal("expected timeout error, got nil")
 	}
 	// Should have timed out around 5s, not waited the full 6s
-	if elapsed >= 6*time.Second {
-		t.Fatalf("request waited too long (%v), timeout was not enforced", elapsed)
+	if elapsed < 4*time.Second || elapsed >= 6*time.Second {
+		t.Fatalf("expected timeout around 5s, got %v", elapsed)
 	}
 }
 
