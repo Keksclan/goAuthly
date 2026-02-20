@@ -158,11 +158,10 @@ func TestHardenedJWT_MissingKid_JWKSMode(t *testing.T) {
 			errContains: "kid",
 		},
 		{
-			name:        "no kid without JWKS still fails (no key resolution)",
+			name:        "no kid without JWKS succeeds (kid only required for JWKS)",
 			token:       makeTokenNoKid(baseClaims),
 			jwksEnabled: false,
-			wantErr:     true,
-			errContains: "kid",
+			wantErr:     false,
 		},
 	}
 

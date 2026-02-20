@@ -1,9 +1,5 @@
 package authly
 
-import (
-	"fmt"
-)
-
 // audienceRuleIsZero reports whether the AudienceRule has no configuration set.
 func audienceRuleIsZero(r AudienceRule) bool {
 	return !r.AnyAudience && len(r.AnyOf) == 0 && len(r.AllOf) == 0 && len(r.Blocklist) == 0
@@ -46,7 +42,7 @@ func (r AudienceRule) Validate(tokenAud []string) error {
 	// 1. Blocklist always wins.
 	for _, blocked := range r.Blocklist {
 		if _, ok := audSet[blocked]; ok {
-			return fmt.Errorf("%w: %s", ErrAudienceBlocked, blocked)
+			return ErrAudienceBlocked
 		}
 	}
 
@@ -59,7 +55,7 @@ func (r AudienceRule) Validate(tokenAud []string) error {
 	if len(r.AllOf) > 0 {
 		for _, required := range r.AllOf {
 			if _, ok := audSet[required]; !ok {
-				return fmt.Errorf("%w: required audience %q not found", ErrAudienceNotAllowed, required)
+				return ErrAudienceNotAllowed
 			}
 		}
 	}
@@ -74,7 +70,7 @@ func (r AudienceRule) Validate(tokenAud []string) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("%w: none of %v matched", ErrAudienceNotAllowed, r.AnyOf)
+			return ErrAudienceNotAllowed
 		}
 	}
 

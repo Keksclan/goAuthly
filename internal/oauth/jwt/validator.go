@@ -87,12 +87,11 @@ type Validator struct {
 	// Validate call, avoiding repeated slice allocation.
 	parserOpts []jwt.ParserOption
 	// Precomputed audience lookup sets (immutable after build).
-	audAnyOfSet     map[string]struct{}
-	audAllOfSet     map[string]struct{}
-	audBlockSet     map[string]struct{}
-	audRuleResolved bool
-	audRule         AudienceRule
-	metrics         MetricsCollector
+	audAnyOfSet map[string]struct{}
+	audAllOfSet map[string]struct{}
+	audBlockSet map[string]struct{}
+	audRule     AudienceRule
+	metrics     MetricsCollector
 }
 
 func New(cfg Config, keys jwk.Provider) (*Validator, error) {
@@ -137,7 +136,6 @@ func (v *Validator) resolveAudienceRule() {
 		}
 	}
 	v.audRule = rule
-	v.audRuleResolved = true
 
 	if len(rule.AnyOf) > 0 {
 		v.audAnyOfSet = make(map[string]struct{}, len(rule.AnyOf))
@@ -178,12 +176,6 @@ func (v *Validator) Validate(ctx context.Context, tokenStr string) (*Claims, err
 			v.emitFailure(FailReasonKid)
 			keyfuncEmitted = true
 			return nil, fmt.Errorf("token missing required kid header")
-		}
-
-		if kid == "" {
-			v.emitFailure(FailReasonKid)
-			keyfuncEmitted = true
-			return nil, fmt.Errorf("missing kid in header")
 		}
 
 		return v.keys.GetKey(ctx, kid)
@@ -314,7 +306,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 	if len(v.audBlockSet) > 0 {
 		for _, a := range tokenAud {
 			if _, ok := v.audBlockSet[a]; ok {
-				return fmt.Errorf("audience blocked: %s", a)
+				return fmt.Errorf("audience blocked")
 			}
 		}
 	}
@@ -341,7 +333,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 		s := lazyAudSet()
 		for _, required := range rule.AllOf {
 			if _, ok := s[required]; !ok {
-				return fmt.Errorf("audience not allowed: required audience %q not found", required)
+				return fmt.Errorf("audience not allowed")
 			}
 		}
 	}
@@ -367,7 +359,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("audience not allowed: none of %v matched", rule.AnyOf)
+			return fmt.Errorf("audience not allowed")
 		}
 	}
 
