@@ -20,4 +20,6 @@ var (
 	ErrActorMissing = errors.New("actor claim missing")
 	// ErrActorNotAllowed is returned when the extracted actor subject is not allowed.
 	ErrActorNotAllowed = errors.New("actor subject not allowed")
+	// ErrLuaPolicy is returned when a Lua policy script rejects the token.
+	ErrLuaPolicy = errors.New("lua policy violation")
 )

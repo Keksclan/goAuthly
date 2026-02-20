@@ -13,6 +13,7 @@ import (
 
 	icache "github.com/keksclan/goAuthly/internal/cache"
 	"github.com/keksclan/goAuthly/internal/jwk"
+	"github.com/keksclan/goAuthly/internal/luaengine"
 	"github.com/keksclan/goAuthly/internal/oauth/introspect"
 	"github.com/keksclan/goAuthly/internal/oauth/jwt"
 )
@@ -59,6 +60,7 @@ type Engine struct {
 	jwksMgr      *jwk.Manager
 	jwtValidator *jwt.Validator
 	introClient  *introspect.Client
+	luaPolicy    *luaengine.CompiledPolicy
 	keepRawToken bool
 }
 
@@ -112,6 +114,20 @@ func New(cfg Config, opts ...Option) (*Engine, error) {
 	// JWKS manager
 	m := jwk.NewManager(cacheAdapter{c: e.cache}, cfg.OAuth2.JWKSCacheTTL, cfg.OAuth2.AllowStaleJWKS)
 	m.SetHTTPClient(e.httpc)
+	// Apply JWKS auth if configured
+	if cfg.OAuth2.JWKS.Auth.Kind != "" {
+		m.SetAuth(jwk.AuthConfig{
+			Kind:        jwk.AuthKind(cfg.OAuth2.JWKS.Auth.Kind),
+			Username:    cfg.OAuth2.JWKS.Auth.Username,
+			Password:    cfg.OAuth2.JWKS.Auth.Password,
+			BearerToken: cfg.OAuth2.JWKS.Auth.BearerToken,
+			HeaderName:  cfg.OAuth2.JWKS.Auth.HeaderName,
+			HeaderValue: cfg.OAuth2.JWKS.Auth.HeaderValue,
+		})
+	}
+	if len(cfg.OAuth2.JWKS.ExtraHeaders) > 0 {
+		m.SetExtraHeaders(cfg.OAuth2.JWKS.ExtraHeaders)
+	}
 	e.jwksMgr = m
 
 	// JWT validator with adapter over jwks manager
@@ -132,11 +148,35 @@ func New(cfg Config, opts ...Option) (*Engine, error) {
 		ClientID:     cfg.OAuth2.Introspection.ClientID,
 		ClientSecret: cfg.OAuth2.Introspection.ClientSecret,
 		Timeout:      cfg.OAuth2.Introspection.Timeout,
+		Auth: introspect.ClientAuth{
+			Kind:         introspect.ClientAuthKind(cfg.OAuth2.Introspection.Auth.Kind),
+			ClientID:     cfg.OAuth2.Introspection.Auth.ClientID,
+			ClientSecret: cfg.OAuth2.Introspection.Auth.ClientSecret,
+			HeaderName:   cfg.OAuth2.Introspection.Auth.HeaderName,
+			HeaderValue:  cfg.OAuth2.Introspection.Auth.HeaderValue,
+		},
+		TokenTransport: introspect.TokenTransport{
+			Kind:   introspect.TokenTransportKind(cfg.OAuth2.Introspection.TokenTransport.Kind),
+			Field:  cfg.OAuth2.Introspection.TokenTransport.Field,
+			Header: cfg.OAuth2.Introspection.TokenTransport.Header,
+			Prefix: cfg.OAuth2.Introspection.TokenTransport.Prefix,
+		},
+		ExtraBody:    cfg.OAuth2.Introspection.ExtraBody,
+		ExtraHeaders: cfg.OAuth2.Introspection.ExtraHeaders,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("init introspection client: %w", err)
 	}
 	e.introClient = ic
+
+	// Compile Lua policy if enabled
+	if cfg.Policies.Lua.Enabled && cfg.Policies.Lua.Script != "" {
+		cp, err := luaengine.Compile(cfg.Policies.Lua.Script)
+		if err != nil {
+			return nil, fmt.Errorf("compile lua policy: %w", err)
+		}
+		e.luaPolicy = cp
+	}
 
 	return e, nil
 }
@@ -246,6 +286,13 @@ func (e *Engine) Verify(ctx context.Context, token string) (*Result, error) {
 	pol := e.selectClaimPolicy(vr.tokenType)
 	if len(pol.ApplyTo) == 0 || slices.Contains(pol.ApplyTo, vr.tokenType) {
 		if err := pol.Validate(vr.claims); err != nil {
+			return nil, err
+		}
+	}
+
+	// Apply Lua policy (if enabled, runs after declarative claim policy)
+	if e.luaPolicy != nil {
+		if err := e.luaPolicy.Evaluate(vr.claims, string(vr.tokenType)); err != nil {
 			return nil, err
 		}
 	}

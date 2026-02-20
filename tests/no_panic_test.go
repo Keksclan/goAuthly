@@ -113,3 +113,84 @@ func TestVerify_NoPanics(t *testing.T) {
 		})
 	}
 }
+
+func TestVerify_NoPanicsWithLuaPolicy(t *testing.T) {
+	ts := startDemoServer(t)
+	defer ts.Close()
+
+	cfg := authly.Config{
+		Mode: authly.AuthModeOAuth2,
+		OAuth2: authly.OAuth2Config{
+			Mode:                  authly.OAuth2JWTAndOpaque,
+			Issuer:                "https://issuer.demo",
+			Audience:              "demo-api",
+			AllowedAlgs:           []string{"RS256"},
+			JWKSURL:               ts.URL + "/.well-known/jwks.json",
+			JWKSCacheTTL:          time.Minute,
+			AllowStaleJWKS:        true,
+			Introspection:         authly.IntrospectionConfig{Endpoint: ts.URL + "/introspect", Timeout: time.Second},
+			IntrospectionCacheTTL: 10 * time.Second,
+		},
+		Policies: authly.Policies{
+			Lua: authly.LuaClaimsPolicy{
+				Enabled: true,
+				Script:  `if has("bad") then reject("bad claim found") end`,
+			},
+		},
+	}
+	eng, err := authly.New(cfg)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	ctx := context.Background()
+	malformedTokens := []string{
+		"", "abc", "a.b", "a.b.c",
+		"opaque-json-bad", "opaque-500",
+	}
+
+	for _, tok := range malformedTokens {
+		assertNotPanics(t, func() {
+			_, _ = eng.Verify(ctx, tok)
+		})
+	}
+}
+
+func TestNoPanic_LuaEngineEdgeCases(t *testing.T) {
+	// Ensure the Lua engine doesn't panic with various edge cases
+	assertNotPanics(t, func() {
+		_, _ = authly.New(authly.Config{
+			Mode: authly.AuthModeOAuth2,
+			OAuth2: authly.OAuth2Config{
+				Mode:          authly.OAuth2OpaqueOnly,
+				Introspection: authly.IntrospectionConfig{Endpoint: "http://localhost/introspect", Timeout: time.Second},
+			},
+			Policies: authly.Policies{
+				Lua: authly.LuaClaimsPolicy{
+					Enabled: true,
+					Script:  `-- empty script`,
+				},
+			},
+		})
+	})
+
+	// Invalid Lua script should return error, not panic
+	assertNotPanics(t, func() {
+		_, err := authly.New(authly.Config{
+			Mode: authly.AuthModeOAuth2,
+			OAuth2: authly.OAuth2Config{
+				Mode:          authly.OAuth2OpaqueOnly,
+				Introspection: authly.IntrospectionConfig{Endpoint: "http://localhost/introspect", Timeout: time.Second},
+			},
+			Policies: authly.Policies{
+				Lua: authly.LuaClaimsPolicy{
+					Enabled: true,
+					Script:  `this is not valid lua %%%`,
+				},
+			},
+		})
+		if err == nil {
+			t.Error("expected error for invalid lua script")
+		}
+	})
+}

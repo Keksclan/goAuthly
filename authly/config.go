@@ -57,6 +57,8 @@ type OAuth2Config struct {
 	JWKSCacheTTL   time.Duration
 	AllowStaleJWKS bool
 
+	JWKS JWKSConfig
+
 	Introspection         IntrospectionConfig
 	IntrospectionCacheTTL time.Duration
 
@@ -64,12 +66,72 @@ type OAuth2Config struct {
 	Opaque OpaquePolicy
 }
 
-// IntrospectionConfig holds RFC 7662 endpoint settings.
-type IntrospectionConfig struct {
-	Endpoint     string
+// TokenTransportKind selects how the token is sent to the introspection endpoint.
+type TokenTransportKind string
+
+const (
+	// TokenTransportBody sends the token in the POST body (default, RFC 7662).
+	TokenTransportBody TokenTransportKind = "body"
+	// TokenTransportHeader sends the token in a request header.
+	TokenTransportHeader TokenTransportKind = "header"
+)
+
+// TokenTransport controls how the token is delivered to the introspection endpoint.
+type TokenTransport struct {
+	Kind   TokenTransportKind
+	Field  string // body field name, default "token"
+	Header string // header name when Kind == header, default "Authorization"
+	Prefix string // header value prefix when Kind == header, e.g. "Bearer "
+}
+
+// ClientAuthKind selects how client credentials are sent.
+type ClientAuthKind string
+
+const (
+	ClientAuthNone   ClientAuthKind = "none"
+	ClientAuthBasic  ClientAuthKind = "basic"
+	ClientAuthBody   ClientAuthKind = "body"
+	ClientAuthHeader ClientAuthKind = "header"
+	ClientAuthBearer ClientAuthKind = "bearer"
+)
+
+// ClientAuth configures client authentication for introspection or JWKS requests.
+type ClientAuth struct {
+	Kind         ClientAuthKind
 	ClientID     string
 	ClientSecret string
-	Timeout      time.Duration
+	HeaderName   string
+	HeaderValue  string
+}
+
+// IntrospectionConfig holds RFC 7662 endpoint settings.
+type IntrospectionConfig struct {
+	Endpoint       string
+	ClientID       string
+	ClientSecret   string
+	Timeout        time.Duration
+	Auth           ClientAuth
+	TokenTransport TokenTransport
+	ExtraBody      map[string]string
+	ExtraHeaders   map[string]string
+}
+
+// JWKSAuth configures authentication for JWKS endpoint requests.
+type JWKSAuth struct {
+	Kind        ClientAuthKind
+	Username    string
+	Password    string
+	HeaderName  string
+	HeaderValue string
+	BearerToken string
+}
+
+// JWKSConfig holds JWKS endpoint settings with optional authentication.
+type JWKSConfig struct {
+	URL          string
+	CacheTTL     time.Duration
+	Auth         JWKSAuth
+	ExtraHeaders map[string]string
 }
 
 // OpaquePolicy configures RFC 7662 opaque-token semantics.
@@ -85,6 +147,12 @@ type OpaquePolicy struct {
 	ExposeActiveClaim bool
 }
 
+// LuaClaimsPolicy configures an optional Lua script for advanced claim validation.
+type LuaClaimsPolicy struct {
+	Enabled bool
+	Script  string
+}
+
 // Policies configures claim and actor validation.
 type Policies struct {
 	// Backward compatibility: TokenClaims applies to both types unless JWTClaims/OpaqueClaims override.
@@ -93,6 +161,7 @@ type Policies struct {
 	JWTClaims    ClaimPolicy
 	OpaqueClaims ClaimPolicy
 	Actor        ActorPolicy
+	Lua          LuaClaimsPolicy
 }
 
 func (c *Config) setDefaults() {

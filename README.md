@@ -62,8 +62,87 @@ The returned `Result` includes the token type (JWT or opaque), subject, optional
 - Use allowlists where feasible to reject unexpected claims.
 - Opaque token cache keys are hashed to avoid storing raw secrets.
 
+## Config Options
+
+goAuthly supports loading configuration from Go structs, Lua files, or JSON files via the `authlyconfig` package.
+
+### Minimal Go Config
+
+```go
+cfg := authly.Config{
+    Mode: authly.AuthModeOAuth2,
+    OAuth2: authly.OAuth2Config{
+        Mode:     authly.OAuth2JWTAndOpaque,
+        Issuer:   "https://issuer.demo",
+        Audience: "demo-api",
+        JWKSURL:  "http://localhost:8080/.well-known/jwks.json",
+        Introspection: authly.IntrospectionConfig{
+            Endpoint: "http://localhost:8080/introspect",
+        },
+    },
+}
+engine, err := authly.New(cfg)
+```
+
+### Minimal Lua Config
+
+```lua
+return {
+  mode = "oauth2",
+  oauth2 = {
+    mode = "jwt_and_opaque",
+    jwks = { url = "http://localhost/.well-known/jwks.json" },
+    introspection = { endpoint = "http://localhost/introspect" }
+  }
+}
+```
+
+Load with: `authlyconfig.FromLuaFile("config.lua")`
+
+### Lua Claim Rules
+
+Lua scripts run after declarative policies and support conditional logic:
+
+```lua
+if has("actor") then
+    require_claim("sub")
+    require_value("iss", "https://issuer.demo")
+end
+if has("xy") then
+    require_claim("x")
+    require_one_of("x", {"a", "b", "c"})
+end
+```
+
+### Token Transport for Introspection
+
+Send the token in the body (default) or a header:
+
+```go
+// Body (default, RFC 7662)
+TokenTransport: authly.TokenTransport{Kind: authly.TokenTransportBody, Field: "token"}
+
+// Header
+TokenTransport: authly.TokenTransport{Kind: authly.TokenTransportHeader, Header: "X-Token", Prefix: "Bearer "}
+```
+
+### JWKS Auth Options
+
+Authenticate JWKS fetches with Basic, Bearer, or custom headers:
+
+```go
+JWKS: authly.JWKSConfig{
+    Auth: authly.JWKSAuth{Kind: authly.ClientAuthBasic, Username: "u", Password: "p"},
+    ExtraHeaders: map[string]string{"X-Custom": "value"},
+}
+```
+
+See `docs/config.md` and `docs/claims.md` for full details.
+
 ## See Also
 
 - `docs/architecture.md` — high-level and detailed flows (Mermaid)
 - `docs/performance.md` — caching strategy and hot paths
+- `docs/config.md` — Go, Lua, and JSON configuration examples
+- `docs/claims.md` — declarative and Lua policy examples with diagrams
 - `examples/verify_demo` — runnable end-to-end example

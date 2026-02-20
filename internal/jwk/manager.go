@@ -12,11 +12,33 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwk"
 )
 
+// AuthKind selects the authentication method for JWKS requests.
+type AuthKind string
+
+const (
+	AuthKindNone   AuthKind = "none"
+	AuthKindBasic  AuthKind = "basic"
+	AuthKindBearer AuthKind = "bearer"
+	AuthKindHeader AuthKind = "header"
+)
+
+// AuthConfig holds authentication settings for JWKS fetching.
+type AuthConfig struct {
+	Kind        AuthKind
+	Username    string
+	Password    string
+	BearerToken string
+	HeaderName  string
+	HeaderValue string
+}
+
 type Manager struct {
-	cache      cache.Cache
-	httpc      *http.Client
-	ttl        time.Duration
-	allowStale bool
+	cache        cache.Cache
+	httpc        *http.Client
+	ttl          time.Duration
+	allowStale   bool
+	auth         AuthConfig
+	extraHeaders map[string]string
 }
 
 func (m *Manager) SetHTTPClient(c *http.Client) {
@@ -32,6 +54,16 @@ func NewManager(c cache.Cache, ttl time.Duration, allowStale bool) *Manager {
 		ttl:        ttl,
 		allowStale: allowStale,
 	}
+}
+
+// SetAuth configures authentication for JWKS requests.
+func (m *Manager) SetAuth(auth AuthConfig) {
+	m.auth = auth
+}
+
+// SetExtraHeaders configures additional headers for JWKS requests.
+func (m *Manager) SetExtraHeaders(headers map[string]string) {
+	m.extraHeaders = headers
 }
 
 func (m *Manager) GetKey(ctx context.Context, jwksURL, kid string) (any, error) {
@@ -74,6 +106,15 @@ func (m *Manager) fetchSet(ctx context.Context, jwksURL string) (jwk.Set, error)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
+
+	// Apply authentication
+	m.applyAuth(req)
+
+	// Apply extra headers
+	for k, v := range m.extraHeaders {
+		req.Header.Set(k, v)
+	}
+
 	resp, err := m.httpc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
@@ -87,6 +128,19 @@ func (m *Manager) fetchSet(ctx context.Context, jwksURL string) (jwk.Set, error)
 		return nil, fmt.Errorf("parse jwks: %w", err)
 	}
 	return set, nil
+}
+
+func (m *Manager) applyAuth(req *http.Request) {
+	switch m.auth.Kind {
+	case AuthKindBasic:
+		req.SetBasicAuth(m.auth.Username, m.auth.Password)
+	case AuthKindBearer:
+		req.Header.Set("Authorization", "Bearer "+m.auth.BearerToken)
+	case AuthKindHeader:
+		if m.auth.HeaderName != "" {
+			req.Header.Set(m.auth.HeaderName, m.auth.HeaderValue)
+		}
+	}
 }
 
 func (m *Manager) getKeyFromSet(set jwk.Set, kid string) (any, error) {

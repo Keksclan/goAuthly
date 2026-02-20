@@ -6,6 +6,7 @@ require (
 	github.com/dgraph-io/ristretto v0.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/lestrrat-go/jwx/v2 v2.1.6
+	github.com/yuin/gopher-lua v1.1.1
 )
 
 require (
