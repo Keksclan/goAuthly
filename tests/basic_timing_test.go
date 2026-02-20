@@ -32,19 +32,25 @@ func TestVerifyUsers_TimingAttackMitigation(t *testing.T) {
 
 	// Case 1: existing user, wrong password
 	errWrongPass := v.Verify(ctx, "alice", "wrong")
+	if errWrongPass == nil {
+		t.Fatal("wrong password: expected error, got nil")
+	}
 	if !errors.Is(errWrongPass, basic.ErrInvalidCredentials) {
-		t.Errorf("wrong password: expected ErrInvalidCredentials, got %v", errWrongPass)
+		t.Fatalf("wrong password: expected ErrInvalidCredentials, got %v", errWrongPass)
 	}
 
 	// Case 2: non-existing user
 	errNoUser := v.Verify(ctx, "nonexistent", "whatever")
+	if errNoUser == nil {
+		t.Fatal("non-existing user: expected error, got nil")
+	}
 	if !errors.Is(errNoUser, basic.ErrInvalidCredentials) {
-		t.Errorf("non-existing user: expected ErrInvalidCredentials, got %v", errNoUser)
+		t.Fatalf("non-existing user: expected ErrInvalidCredentials, got %v", errNoUser)
 	}
 
 	// Both errors must be identical — no information leakage via error value.
 	if errWrongPass.Error() != errNoUser.Error() {
-		t.Errorf("error messages differ: wrong-pass=%q, no-user=%q", errWrongPass, errNoUser)
+		t.Errorf("error messages differ: wrong-pass=%q, no-user=%q", errWrongPass.Error(), errNoUser.Error())
 	}
 }
 
