@@ -14,6 +14,9 @@ import (
 
 var ErrTokenInactive = errors.New("token is inactive")
 
+// maxResponseSize limits the size of introspection HTTP responses to prevent memory bombs.
+const maxResponseSize = 1 << 20 // 1 MB
+
 // TokenTransportKind selects how the token is delivered.
 type TokenTransportKind string
 
@@ -158,7 +161,7 @@ func (c *Client) Introspect(ctx context.Context, token string) (*IntrospectionRe
 		return nil, fmt.Errorf("introspection failed with status: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}

@@ -280,6 +280,9 @@ func (e *Engine) Verify(ctx context.Context, token string) (*Result, error) {
 	if e.cfg.Mode != AuthModeOAuth2 {
 		return nil, ErrUnsupportedMode
 	}
+	if token == "" {
+		return nil, ErrInvalidToken
+	}
 
 	looksJWT := strings.Count(token, ".") == 2
 	var v tokenVerifier

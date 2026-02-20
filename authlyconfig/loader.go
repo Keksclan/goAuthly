@@ -250,6 +250,7 @@ func LoadLuaString(script string) (*authly.Config, error) {
 	L.SetGlobal("dofile", lua.LNil)
 	L.SetGlobal("loadfile", lua.LNil)
 	L.SetGlobal("load", lua.LNil)
+	L.SetGlobal("loadstring", lua.LNil)
 
 	if err := L.DoString(script); err != nil {
 		return nil, fmt.Errorf("lua config execution: %w", err)

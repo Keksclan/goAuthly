@@ -202,10 +202,11 @@ func openSafeLibs(L *lua.LState) {
 		L.Push(lua.LString(pair.name))
 		L.Call(1, 0)
 	}
-	// Remove dangerous base functions
+	// Remove dangerous base functions that could escape the sandbox.
 	L.SetGlobal("dofile", lua.LNil)
 	L.SetGlobal("loadfile", lua.LNil)
 	L.SetGlobal("load", lua.LNil)
+	L.SetGlobal("loadstring", lua.LNil)
 }
 
 // mapToLTable converts a Go map to a Lua table.

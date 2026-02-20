@@ -10,6 +10,7 @@ require (
 	github.com/valyala/fasthttp v1.69.0
 	github.com/yuin/gopher-lua v1.1.1
 	golang.org/x/crypto v0.46.0
+	golang.org/x/sync v0.19.0
 	google.golang.org/grpc v1.79.1
 )
 

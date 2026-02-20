@@ -5,12 +5,17 @@ import (
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
 	"github.com/keksclan/goAuthly/internal/cache"
 	"github.com/lestrrat-go/jwx/v2/jwk"
+	"golang.org/x/sync/singleflight"
 )
+
+// maxJWKSResponseSize limits the size of JWKS HTTP responses to prevent memory bombs.
+const maxJWKSResponseSize = 1 << 20 // 1 MB
 
 // AuthKind selects the authentication method for JWKS requests.
 type AuthKind string
@@ -39,6 +44,7 @@ type Manager struct {
 	allowStale   bool
 	auth         AuthConfig
 	extraHeaders map[string]string
+	sfGroup      singleflight.Group
 }
 
 func (m *Manager) SetHTTPClient(c *http.Client) {
@@ -76,8 +82,18 @@ func (m *Manager) GetKey(ctx context.Context, jwksURL, kid string) (any, error) 
 		}
 	}
 
-	set, fetchErr := m.fetchSet(ctx, jwksURL)
+	// Use singleflight to prevent stampede on concurrent cache misses.
+	result, fetchErr, _ := m.sfGroup.Do(jwksURL, func() (any, error) {
+		// Double-check cache inside singleflight (another goroutine may have populated it).
+		if val, ok := m.cache.Get(freshKey); ok {
+			if set, ok := val.(jwk.Set); ok && set != nil {
+				return set, nil
+			}
+		}
+		return m.fetchSet(ctx, jwksURL)
+	})
 	if fetchErr == nil {
+		set := result.(jwk.Set)
 		// store fresh and stale
 		m.cache.Set(freshKey, set, 1, m.ttl)
 		// keep stale longer (4x TTL, minimum 1h)
@@ -123,7 +139,7 @@ func (m *Manager) fetchSet(ctx context.Context, jwksURL string) (jwk.Set, error)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
-	set, err := jwk.ParseReader(resp.Body)
+	set, err := jwk.ParseReader(io.LimitReader(resp.Body, maxJWKSResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("parse jwks: %w", err)
 	}
