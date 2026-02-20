@@ -164,9 +164,34 @@ cfg := authly.Config{
 }
 ```
 
-### Checklist
+### Audience Blocklist
 
-- [ ] `Issuer` and `Audience` are set and match your identity provider.
+Even with `AnyAudience: true`, the **blocklist always wins**. Use it to deny
+specific audiences that should never be accepted — for example, internal service
+audiences that external tokens must not carry:
+
+```go
+AudienceRule: authly.AudienceRule{
+    AnyAudience: true,
+    Blocklist:   []string{"internal-admin", "system-cron"},
+}
+```
+
+Blocklist is checked first, before any allow logic runs. This is by design:
+deny rules must not be bypassed by permissive allow rules.
+
+### Required Metadata as a Security Layer
+
+Required metadata headers act as an additional gate. If your API gateway
+is supposed to inject `X-User-Sub` after its own verification, requiring that
+header in goAuthly adapters ensures a misconfigured gateway doesn't silently
+let requests through without it.
+
+This is **defense in depth**, not a replacement for token verification.
+
+### Checklist
+- [ ] `Issuer` and `Audience` (or `AudienceRule`) are set and match your identity provider.
+- [ ] `AudienceRule.Blocklist` denies any audiences that should never be accepted.
 - [ ] `AllowedAlgs` is restricted to algorithms you actually use.
 - [ ] JWKS URL uses HTTPS.
 - [ ] Introspection endpoint uses HTTPS.
@@ -175,4 +200,5 @@ cfg := authly.Config{
 - [ ] Claim policies reject unexpected claims.
 - [ ] Basic Auth passwords are bcrypt hashes, never plaintext.
 - [ ] Actor policy (if used) has `AllowedActorSubjects` set.
+- [ ] Required metadata headers are configured when upstream gateway headers are expected.
 - [ ] No `panic()` calls in your own middleware wrapping goAuthly.

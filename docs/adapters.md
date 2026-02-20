@@ -231,3 +231,78 @@ func MyMiddleware(engine *authly.Engine) http.Handler {
 ```
 
 The key rules: extract credentials, call Engine, inject result. Don't add logic.
+
+---
+
+## Required Metadata Headers
+
+Sometimes a valid token isn't enough — you also need certain headers present.
+Think `X-User-Sub`, `X-Tenant-Id`, or `X-Actor-Sub`. Required metadata lets you
+enforce their presence *before* the token is even verified.
+
+### Why?
+
+- **Defense in depth.** If a gateway is supposed to inject `X-User-Sub`, its absence
+  means something upstream is misconfigured. Reject early.
+- **Consistent contract.** Downstream services can rely on these headers being there.
+
+### HTTP vs gRPC Key Casing
+
+| Transport | Casing Rule |
+|-----------|-------------|
+| HTTP (Fiber/fasthttp) | Case-insensitive. `X-User-Sub` matches `x-user-sub`. |
+| gRPC | Keys are lower-case per gRPC conventions. Always use `x-user-sub`. |
+
+### Usage
+
+Each adapter accepts options via variadic `Option` parameters:
+
+**Fiber:**
+```go
+app.Use(authlyfiber.Middleware(engine,
+    authlyfiber.WithRequiredMetadata("X-User-Sub", "X-Tenant-Id"),
+))
+```
+
+**fasthttp:**
+```go
+handler := authlyfasthttp.Middleware(engine, next,
+    authlyfasthttp.WithRequiredMetadata("X-User-Sub"),
+)
+```
+
+**gRPC:**
+```go
+grpc.NewServer(
+    grpc.UnaryInterceptor(authlygrpc.UnaryServerInterceptor(engine,
+        authlygrpc.WithRequiredMetadata("x-user-sub"),
+    )),
+)
+```
+
+### Behavior
+
+- Validation runs **before** token verification.
+- Missing or empty (whitespace-only) values trigger rejection.
+- HTTP adapters return `401` with a JSON error body.
+- gRPC returns `codes.Unauthenticated` with an error message.
+
+### Disabling at Runtime
+
+```go
+authlyfiber.WithRequiredMetadataEnabled(false) // turns off validation
+```
+
+### Attaching Metadata to Result (Optional)
+
+Off by default. When enabled, validated metadata values are merged into
+`Result.Claims["_meta"]`:
+
+```go
+authlyfiber.WithAttachMetadataToResult(true)
+
+// After auth, result.Claims["_meta"] looks like:
+// map[string]any{"x-user-sub": "user-123", "x-tenant-id": "tenant-456"}
+```
+
+This is handy when downstream handlers need the metadata without re-reading headers.

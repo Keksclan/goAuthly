@@ -10,10 +10,19 @@ import (
 	"github.com/keksclan/goAuthly/internal/jwk"
 )
 
+// AudienceRule mirrors authly.AudienceRule for internal use.
+type AudienceRule struct {
+	AnyAudience bool
+	AnyOf       []string
+	AllOf       []string
+	Blocklist   []string
+}
+
 type Config struct {
-	Issuer      string
-	Audience    string
-	AllowedAlgs []string
+	Issuer       string
+	Audience     string
+	AudienceRule AudienceRule
+	AllowedAlgs  []string
 }
 
 type Claims struct {
@@ -104,18 +113,72 @@ func (v *Validator) Validate(ctx context.Context, tokenStr string) (*Claims, err
 		return nil, fmt.Errorf("invalid issuer: expected %s, got %s", v.cfg.Issuer, res.Issuer)
 	}
 
-	if v.cfg.Audience != "" {
+	// Audience validation via AudienceRule.
+	if err := v.validateAudience(res.Audience); err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
+// audienceRuleIsZero reports whether the AudienceRule has no configuration.
+func audienceRuleIsZero(r AudienceRule) bool {
+	return !r.AnyAudience && len(r.AnyOf) == 0 && len(r.AllOf) == 0 && len(r.Blocklist) == 0
+}
+
+// validateAudience checks the token audiences against the configured rule.
+// It resolves the effective rule from the legacy Audience field when needed.
+func (v *Validator) validateAudience(tokenAud []string) error {
+	rule := v.cfg.AudienceRule
+	if audienceRuleIsZero(rule) {
+		// Backwards compatibility: convert legacy Audience string.
+		if v.cfg.Audience == "*" {
+			rule = AudienceRule{AnyAudience: true}
+		} else if v.cfg.Audience != "" {
+			rule = AudienceRule{AnyOf: []string{v.cfg.Audience}}
+		} else {
+			return nil // no audience enforcement
+		}
+	}
+
+	// Build set for efficient lookup.
+	audSet := make(map[string]struct{}, len(tokenAud))
+	for _, a := range tokenAud {
+		audSet[a] = struct{}{}
+	}
+
+	// 1. Blocklist always wins.
+	for _, blocked := range rule.Blocklist {
+		if _, ok := audSet[blocked]; ok {
+			return fmt.Errorf("audience blocked: %s", blocked)
+		}
+	}
+
+	// 2. Wildcard.
+	if rule.AnyAudience {
+		return nil
+	}
+
+	// 3. AllOf: every value must be present.
+	for _, required := range rule.AllOf {
+		if _, ok := audSet[required]; !ok {
+			return fmt.Errorf("audience not allowed: required audience %q not found", required)
+		}
+	}
+
+	// 4. AnyOf: at least one must be present.
+	if len(rule.AnyOf) > 0 {
 		found := false
-		for _, a := range res.Audience {
-			if a == v.cfg.Audience {
+		for _, allowed := range rule.AnyOf {
+			if _, ok := audSet[allowed]; ok {
 				found = true
 				break
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("invalid audience: expected %s", v.cfg.Audience)
+			return fmt.Errorf("audience not allowed: none of %v matched", rule.AnyOf)
 		}
 	}
 
-	return res, nil
+	return nil
 }

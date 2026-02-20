@@ -151,9 +151,16 @@ func New(cfg Config, opts ...Option) (*Engine, error) {
 
 		// JWT validator
 		prov := &managerProviderAdapter{mgr: m, url: cfg.OAuth2.JWKSURL}
+		audRule := EffectiveAudienceRule(cfg.OAuth2)
 		jv, err := jwt.New(jwt.Config{
-			Issuer:      cfg.OAuth2.Issuer,
-			Audience:    cfg.OAuth2.Audience,
+			Issuer:   cfg.OAuth2.Issuer,
+			Audience: cfg.OAuth2.Audience,
+			AudienceRule: jwt.AudienceRule{
+				AnyAudience: audRule.AnyAudience,
+				AnyOf:       audRule.AnyOf,
+				AllOf:       audRule.AllOf,
+				Blocklist:   audRule.Blocklist,
+			},
 			AllowedAlgs: cfg.OAuth2.AllowedAlgs,
 		}, prov)
 		if err != nil {

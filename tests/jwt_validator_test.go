@@ -87,7 +87,7 @@ func TestJWTValidator(t *testing.T) {
 			}, privKey, gojwt.SigningMethodRS256, kid),
 			config:      oauthjwt.Config{Issuer: issuer, Audience: audience},
 			wantErr:     true,
-			errContains: "invalid audience",
+			errContains: "audience not allowed",
 		},
 		{
 			name: "Wrong issuer",

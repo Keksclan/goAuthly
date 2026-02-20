@@ -280,3 +280,77 @@ JWKS: authly.JWKSConfig{
     },
 }
 ```
+
+## Audience Rules
+
+The legacy `Audience` string still works, but for richer control you can use `AudienceRule`.
+If `AudienceRule` is configured, it **overrides** the legacy `Audience` field.
+
+### Backwards Compatibility
+
+| Legacy `Audience` value | Equivalent `AudienceRule` |
+|-------------------------|---------------------------|
+| `""` (empty) | No audience enforcement |
+| `"*"` | `AudienceRule{AnyAudience: true}` |
+| `"my-api"` | `AudienceRule{AnyOf: []string{"my-api"}}` |
+
+### AudienceRule Fields
+
+```go
+type AudienceRule struct {
+    AnyAudience bool     // "*" — accept any audience (blocklist still applies)
+    AnyOf       []string // OR — token aud must contain at least one
+    AllOf       []string // AND — token aud must contain all
+    Blocklist   []string // deny — reject if token aud contains any of these
+}
+```
+
+### Matching Logic (in order)
+
+1. **Blocklist** — if any token audience matches → reject. Always wins.
+2. **AnyAudience** — if true → accept (blocklist already checked).
+3. **AllOf** — every listed value must be present in the token.
+4. **AnyOf** — at least one listed value must be present.
+5. If both `AllOf` and `AnyOf` are empty → no enforcement (accept all).
+
+### Examples
+
+**Accept any audience except `internal-admin`:**
+```go
+OAuth2: authly.OAuth2Config{
+    AudienceRule: authly.AudienceRule{
+        AnyAudience: true,
+        Blocklist:   []string{"internal-admin"},
+    },
+}
+```
+
+**Require both `api` and `tenant:<id>` (AND):**
+```go
+OAuth2: authly.OAuth2Config{
+    AudienceRule: authly.AudienceRule{
+        AllOf: []string{"api", "tenant:acme"},
+    },
+}
+```
+
+**Allow any of `api-a` or `api-b`, but block `api-b-beta` (OR + blocklist):**
+```go
+OAuth2: authly.OAuth2Config{
+    AudienceRule: authly.AudienceRule{
+        AnyOf:     []string{"api-a", "api-b"},
+        Blocklist: []string{"api-b-beta"},
+    },
+}
+```
+
+**Combined AND + OR:**
+```go
+OAuth2: authly.OAuth2Config{
+    AudienceRule: authly.AudienceRule{
+        AllOf: []string{"api"},
+        AnyOf: []string{"v1", "v2"},
+    },
+}
+// Token must have "api" AND at least one of "v1"/"v2".
+```

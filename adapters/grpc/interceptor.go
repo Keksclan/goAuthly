@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"strings"
 
+	"github.com/keksclan/goAuthly/adapters/common"
 	"github.com/keksclan/goAuthly/authly"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -33,6 +34,45 @@ func contextWithResult(ctx context.Context, r *authly.Result) context.Context {
 	return context.WithValue(ctx, contextKey{}, r)
 }
 
+// Option configures the gRPC interceptors.
+type Option func(*options)
+
+type options struct {
+	common.AdapterOptions
+}
+
+// WithRequiredMetadata specifies metadata keys that must be present in
+// incoming gRPC metadata before authentication proceeds.
+func WithRequiredMetadata(keys ...string) Option {
+	return func(o *options) {
+		o.RequiredMeta.Keys = keys
+		o.RequiredMeta.Enabled = true
+	}
+}
+
+// WithRequiredMetadataEnabled toggles required metadata validation on or off.
+func WithRequiredMetadataEnabled(enabled bool) Option {
+	return func(o *options) {
+		o.RequiredMeta.Enabled = enabled
+	}
+}
+
+// WithAttachMetadataToResult enables or disables attaching required metadata
+// values to the Result.Claims under the "_meta" namespace.
+func WithAttachMetadataToResult(attach bool) Option {
+	return func(o *options) {
+		o.AttachMetaToResult = attach
+	}
+}
+
+func buildOptions(opts []Option) options {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
 // UnaryServerInterceptor returns a gRPC unary server interceptor that authenticates
 // requests using the provided authly.Engine.
 //
@@ -42,14 +82,15 @@ func contextWithResult(ctx context.Context, r *authly.Result) context.Context {
 //
 // On success, the authly.Result is stored in the context and can be retrieved
 // with ResultFromContext. On failure, the interceptor returns codes.Unauthenticated.
-func UnaryServerInterceptor(engine *authly.Engine) grpc.UnaryServerInterceptor {
+func UnaryServerInterceptor(engine *authly.Engine, opts ...Option) grpc.UnaryServerInterceptor {
+	o := buildOptions(opts)
 	return func(
 		ctx context.Context,
 		req any,
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (any, error) {
-		newCtx, err := authenticate(ctx, engine)
+		newCtx, err := authenticate(ctx, engine, &o)
 		if err != nil {
 			return nil, err
 		}
@@ -61,14 +102,15 @@ func UnaryServerInterceptor(engine *authly.Engine) grpc.UnaryServerInterceptor {
 // requests using the provided authly.Engine.
 //
 // Behavior is identical to UnaryServerInterceptor but for streaming RPCs.
-func StreamServerInterceptor(engine *authly.Engine) grpc.StreamServerInterceptor {
+func StreamServerInterceptor(engine *authly.Engine, opts ...Option) grpc.StreamServerInterceptor {
+	o := buildOptions(opts)
 	return func(
 		srv any,
 		ss grpc.ServerStream,
 		info *grpc.StreamServerInfo,
 		handler grpc.StreamHandler,
 	) error {
-		newCtx, err := authenticate(ss.Context(), engine)
+		newCtx, err := authenticate(ss.Context(), engine, &o)
 		if err != nil {
 			return err
 		}
@@ -85,10 +127,42 @@ type wrappedStream struct {
 // Context returns the wrapped context containing the authly.Result.
 func (w *wrappedStream) Context() context.Context { return w.ctx }
 
-func authenticate(ctx context.Context, engine *authly.Engine) (context.Context, error) {
+// grpcMetadataExtractor adapts gRPC incoming metadata to the MetadataExtractor interface.
+type grpcMetadataExtractor struct {
+	md metadata.MD
+}
+
+func (e *grpcMetadataExtractor) Get(key string) (string, bool) {
+	// gRPC metadata keys are always lower-case.
+	vals := e.md.Get(strings.ToLower(key))
+	if len(vals) == 0 {
+		return "", false
+	}
+	return vals[0], true
+}
+
+func (e *grpcMetadataExtractor) All() map[string]string {
+	m := make(map[string]string, len(e.md))
+	for k, vals := range e.md {
+		if len(vals) > 0 {
+			m[k] = vals[0]
+		}
+	}
+	return m
+}
+
+func authenticate(ctx context.Context, engine *authly.Engine, o *options) (context.Context, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return ctx, status.Error(codes.Unauthenticated, "missing metadata")
+	}
+
+	// Validate required metadata before auth.
+	if o.RequiredMeta.Enabled {
+		ex := &grpcMetadataExtractor{md: md}
+		if err := o.RequiredMeta.Validate(ex); err != nil {
+			return ctx, status.Error(codes.Unauthenticated, err.Error())
+		}
 	}
 
 	vals := md.Get("authorization")
@@ -111,6 +185,13 @@ func authenticate(ctx context.Context, engine *authly.Engine) (context.Context, 
 
 	if err != nil {
 		return ctx, status.Error(codes.Unauthenticated, err.Error())
+	}
+
+	// Optionally attach metadata to result.
+	if o.AttachMetaToResult && o.RequiredMeta.Enabled {
+		ex := &grpcMetadataExtractor{md: md}
+		meta := o.RequiredMeta.ExtractMetadataMap(ex)
+		common.ApplyMetadataToResult(result, meta, true)
 	}
 
 	return contextWithResult(ctx, result), nil

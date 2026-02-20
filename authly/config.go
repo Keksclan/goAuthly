@@ -54,6 +54,10 @@ type OAuth2Config struct {
 	Audience    string
 	AllowedAlgs []string
 
+	// AudienceRule provides rich audience validation (wildcard, AND/OR, blocklist).
+	// If set (non-zero), it overrides the legacy Audience string field.
+	AudienceRule AudienceRule
+
 	JWKSURL        string
 	JWKSCacheTTL   time.Duration
 	AllowStaleJWKS bool
@@ -133,6 +137,28 @@ type JWKSConfig struct {
 	CacheTTL     time.Duration
 	Auth         JWKSAuth
 	ExtraHeaders map[string]string
+}
+
+// AudienceRule configures rich audience validation for JWT tokens.
+//
+// Matching logic order:
+//  1. If Blocklist has any match => reject (always wins)
+//  2. If AnyAudience=true => accept (skip allow checks, but still apply blocklist)
+//  3. If AllOf non-empty => require all present
+//  4. If AnyOf non-empty => require at least one present
+//  5. If both AllOf and AnyOf are empty => do not enforce audience
+type AudienceRule struct {
+	// AnyAudience means do not enforce aud at all ("*").
+	AnyAudience bool
+
+	// AnyOf: token aud must contain at least one of these values (OR).
+	AnyOf []string
+
+	// AllOf: token aud must contain all of these values (AND).
+	AllOf []string
+
+	// Blocklist: if token aud contains ANY of these values => reject.
+	Blocklist []string
 }
 
 // OpaquePolicy configures RFC 7662 opaque-token semantics.

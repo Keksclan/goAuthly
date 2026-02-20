@@ -225,3 +225,31 @@ fmt.Println("JWKS:", string(body))
 | `lua policy violation` | `ErrLuaPolicy` | Lua script rejected the token |
 | `basic auth failed` | `ErrBasicAuthFailed` | Basic auth credentials invalid |
 | `invalid credentials` | `basic.ErrInvalidCredentials` | Username/password mismatch |
+| `audience blocked: X` | `ErrAudienceBlocked` | Token audience X is in the blocklist |
+| `audience not allowed: ...` | `ErrAudienceNotAllowed` | Token audience doesn't satisfy AnyOf/AllOf rules |
+| `audience missing` | `ErrAudienceMissing` | Token has no audience claim (when required) |
+| `missing required metadata: X` | `ErrMissingRequiredMetadata` | Required header/metadata X is missing or empty |
+
+---
+
+## Audience Rule Troubleshooting
+
+**"audience blocked" but I expected it to pass?**
+Blocklist always wins — even with `AnyAudience: true`. Check your `Blocklist` entries.
+
+**"audience not allowed" with AnyOf?**
+The token must contain *at least one* of the `AnyOf` values. Check `aud` claim in your token (it can be a string or array).
+
+**"audience not allowed" with AllOf?**
+The token must contain *all* of the `AllOf` values. A missing single value causes rejection.
+
+**Legacy `Audience` string still working?**
+Yes. If `AudienceRule` is zero-valued, the old `Audience` string is auto-converted. Set `AudienceRule` explicitly to override.
+
+## Required Metadata Troubleshooting
+
+**"missing required metadata: X-User-Sub" on every request?**
+Your client/gateway isn't sending the header. For gRPC, remember keys must be lower-case (`x-user-sub`, not `X-User-Sub`).
+
+**Metadata validation blocks even with a valid token?**
+Correct — metadata is checked *before* token verification. Fix the missing header first.
