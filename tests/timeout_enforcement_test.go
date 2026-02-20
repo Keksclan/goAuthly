@@ -90,8 +90,8 @@ func TestIntrospectRespectsContextCancellation(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected context cancellation error, got nil")
 	}
-	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		t.Fatalf("expected context deadline exceeded, got %v", ctx.Err())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got %v", err)
 	}
 	if elapsed >= 500*time.Millisecond {
 		t.Fatalf("request did not respect context cancellation (took %v)", elapsed)
