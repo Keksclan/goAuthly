@@ -1,6 +1,10 @@
 package authly
 
-import "errors"
+import (
+	"errors"
+
+	jwt "github.com/keksclan/goAuthly/internal/oauth/jwt"
+)
 
 // Package-level errors returned by the library.
 var (
@@ -25,11 +29,13 @@ var (
 	// ErrBasicAuthFailed is returned when Basic Auth credentials are invalid.
 	ErrBasicAuthFailed = errors.New("basic auth failed")
 	// ErrAudienceBlocked is returned when a token audience matches the blocklist.
-	ErrAudienceBlocked = errors.New("audience blocked")
+	// Re-exported from the internal JWT validator so errors.Is works across packages.
+	ErrAudienceBlocked = jwt.ErrAudienceBlocked
 	// ErrAudienceMissing is returned when the token has no audience claim.
 	ErrAudienceMissing = errors.New("audience missing")
 	// ErrAudienceNotAllowed is returned when the token audience does not satisfy allow rules.
-	ErrAudienceNotAllowed = errors.New("audience not allowed")
+	// Re-exported from the internal JWT validator so errors.Is works across packages.
+	ErrAudienceNotAllowed = jwt.ErrAudienceNotAllowed
 	// ErrMissingRequiredMetadata is returned when a required metadata header is missing or empty.
 	ErrMissingRequiredMetadata = errors.New("missing required metadata")
 )

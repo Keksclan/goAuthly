@@ -2,6 +2,7 @@ package jwt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -10,6 +11,12 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/keksclan/goAuthly/internal/jwk"
+)
+
+// Sentinel errors for audience validation failures.
+var (
+	ErrAudienceBlocked    = errors.New("audience blocked")
+	ErrAudienceNotAllowed = errors.New("audience not allowed")
 )
 
 // AudienceRule mirrors authly.AudienceRule for internal use.
@@ -330,7 +337,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 			// Throughput mode: O(1) lookup via precomputed set.
 			for _, a := range tokenAud {
 				if _, ok := v.audBlockSet[a]; ok {
-					return fmt.Errorf("audience blocked")
+					return ErrAudienceBlocked
 				}
 			}
 		} else {
@@ -338,7 +345,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 			for _, a := range tokenAud {
 				for _, blocked := range rule.Blocklist {
 					if a == blocked {
-						return fmt.Errorf("audience blocked")
+						return ErrAudienceBlocked
 					}
 				}
 			}
@@ -367,7 +374,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 		s := lazyAudSet()
 		for _, required := range rule.AllOf {
 			if _, ok := s[required]; !ok {
-				return fmt.Errorf("audience not allowed")
+				return ErrAudienceNotAllowed
 			}
 		}
 	}
@@ -408,7 +415,7 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("audience not allowed")
+			return ErrAudienceNotAllowed
 		}
 	}
 
