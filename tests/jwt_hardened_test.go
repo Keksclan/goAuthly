@@ -306,7 +306,7 @@ func TestHardenedJWT_ExpiredToken(t *testing.T) {
 		{
 			name:        "expired beyond default skew",
 			exp:         time.Now().Add(-2 * time.Minute),
-			clockSkew:   0, // uses default 30s
+			clockSkew:   0, // zero leeway, no clock skew
 			wantErr:     true,
 			errContains: "expired",
 		},
@@ -386,7 +386,7 @@ func TestHardenedJWT_NotYetValid(t *testing.T) {
 		{
 			name:        "nbf in future beyond default skew",
 			nbf:         time.Now().Add(2 * time.Minute),
-			clockSkew:   0,
+			clockSkew:   0, // zero leeway, no clock skew
 			wantErr:     true,
 			errContains: "not valid yet",
 		},
