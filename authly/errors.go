@@ -20,4 +20,16 @@ var (
 	ErrActorMissing = errors.New("actor claim missing")
 	// ErrActorNotAllowed is returned when the extracted actor subject is not allowed.
 	ErrActorNotAllowed = errors.New("actor subject not allowed")
+	// ErrLuaPolicy is returned when a Lua policy script rejects the token.
+	ErrLuaPolicy = errors.New("lua policy violation")
+	// ErrBasicAuthFailed is returned when Basic Auth credentials are invalid.
+	ErrBasicAuthFailed = errors.New("basic auth failed")
+	// ErrAudienceBlocked is returned when a token audience matches the blocklist.
+	ErrAudienceBlocked = errors.New("audience blocked")
+	// ErrAudienceMissing is returned when the token has no audience claim.
+	ErrAudienceMissing = errors.New("audience missing")
+	// ErrAudienceNotAllowed is returned when the token audience does not satisfy allow rules.
+	ErrAudienceNotAllowed = errors.New("audience not allowed")
+	// ErrMissingRequiredMetadata is returned when a required metadata header is missing or empty.
+	ErrMissingRequiredMetadata = errors.New("missing required metadata")
 )

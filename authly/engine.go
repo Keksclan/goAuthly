@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keksclan/goAuthly/internal/basic"
 	icache "github.com/keksclan/goAuthly/internal/cache"
 	"github.com/keksclan/goAuthly/internal/jwk"
+	"github.com/keksclan/goAuthly/internal/luaengine"
 	"github.com/keksclan/goAuthly/internal/oauth/introspect"
 	"github.com/keksclan/goAuthly/internal/oauth/jwt"
 )
@@ -48,18 +50,23 @@ func (r *Result) IsJWT() bool { return r != nil && r.Type == TokenTypeJWT }
 // IsOpaque reports whether the result originated from an opaque token introspection.
 func (r *Result) IsOpaque() bool { return r != nil && r.Type == TokenTypeOpaque }
 
+// IsBasic reports whether the result originated from a Basic Auth verification.
+func (r *Result) IsBasic() bool { return r != nil && r.Type == TokenTypeBasic }
+
 // Engine verifies tokens according to the provided Config.
 //
 // Concurrency: Engine is safe for concurrent use if the provided Cache and HTTP client
 // are safe for concurrent use (the defaults are). No method mutates shared state.
 type Engine struct {
-	cfg          Config
-	httpc        *http.Client
-	cache        Cache
-	jwksMgr      *jwk.Manager
-	jwtValidator *jwt.Validator
-	introClient  *introspect.Client
-	keepRawToken bool
+	cfg           Config
+	httpc         *http.Client
+	cache         Cache
+	jwksMgr       *jwk.Manager
+	jwtValidator  *jwt.Validator
+	introClient   *introspect.Client
+	basicVerifier *basic.Verifier
+	luaPolicy     *luaengine.CompiledPolicy
+	keepRawToken  bool
 }
 
 // cacheAdapter bridges public Cache to internal cache interface
@@ -97,46 +104,106 @@ func New(cfg Config, opts ...Option) (*Engine, error) {
 	for _, opt := range opts {
 		opt(e)
 	}
-	if e.httpc == nil {
-		e.httpc = &http.Client{Timeout: 10 * time.Second}
-	}
-	if e.cache == nil {
-		// default ristretto cache
-		rc, err := icache.NewRistrettoCache(1<<15, 1<<20, 64)
+	// Initialize Basic Auth verifier if configured
+	if cfg.BasicAuth.Enabled {
+		bv, err := basic.NewVerifier(basic.Config{
+			Enabled:   true,
+			Users:     cfg.BasicAuth.Users,
+			Validator: cfg.BasicAuth.Validator,
+			Realm:     cfg.BasicAuth.Realm,
+		})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("init basic auth: %w", err)
 		}
-		e.cache = rc
+		e.basicVerifier = bv
 	}
 
-	// JWKS manager
-	m := jwk.NewManager(cacheAdapter{c: e.cache}, cfg.OAuth2.JWKSCacheTTL, cfg.OAuth2.AllowStaleJWKS)
-	m.SetHTTPClient(e.httpc)
-	e.jwksMgr = m
+	// Initialize OAuth2 components only when OAuth2 mode is active
+	if cfg.Mode == AuthModeOAuth2 {
+		if e.httpc == nil {
+			e.httpc = &http.Client{Timeout: 10 * time.Second}
+		}
+		if e.cache == nil {
+			rc, err := icache.NewRistrettoCache(1<<15, 1<<20, 64)
+			if err != nil {
+				return nil, err
+			}
+			e.cache = rc
+		}
 
-	// JWT validator with adapter over jwks manager
-	prov := &managerProviderAdapter{mgr: m, url: cfg.OAuth2.JWKSURL}
-	jv, err := jwt.New(jwt.Config{
-		Issuer:      cfg.OAuth2.Issuer,
-		Audience:    cfg.OAuth2.Audience,
-		AllowedAlgs: cfg.OAuth2.AllowedAlgs,
-	}, prov)
-	if err != nil {
-		return nil, fmt.Errorf("init jwt validator: %w", err)
-	}
-	e.jwtValidator = jv
+		// JWKS manager
+		m := jwk.NewManager(cacheAdapter{c: e.cache}, cfg.OAuth2.JWKSCacheTTL, cfg.OAuth2.AllowStaleJWKS)
+		m.SetHTTPClient(e.httpc)
+		if cfg.OAuth2.JWKS.Auth.Kind != "" {
+			m.SetAuth(jwk.AuthConfig{
+				Kind:        jwk.AuthKind(cfg.OAuth2.JWKS.Auth.Kind),
+				Username:    cfg.OAuth2.JWKS.Auth.Username,
+				Password:    cfg.OAuth2.JWKS.Auth.Password,
+				BearerToken: cfg.OAuth2.JWKS.Auth.BearerToken,
+				HeaderName:  cfg.OAuth2.JWKS.Auth.HeaderName,
+				HeaderValue: cfg.OAuth2.JWKS.Auth.HeaderValue,
+			})
+		}
+		if len(cfg.OAuth2.JWKS.ExtraHeaders) > 0 {
+			m.SetExtraHeaders(cfg.OAuth2.JWKS.ExtraHeaders)
+		}
+		e.jwksMgr = m
 
-	// Introspection client
-	ic, err := introspect.New(introspect.Config{
-		Endpoint:     cfg.OAuth2.Introspection.Endpoint,
-		ClientID:     cfg.OAuth2.Introspection.ClientID,
-		ClientSecret: cfg.OAuth2.Introspection.ClientSecret,
-		Timeout:      cfg.OAuth2.Introspection.Timeout,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("init introspection client: %w", err)
+		// JWT validator
+		prov := &managerProviderAdapter{mgr: m, url: cfg.OAuth2.JWKSURL}
+		audRule := EffectiveAudienceRule(cfg.OAuth2)
+		jv, err := jwt.New(jwt.Config{
+			Issuer:   cfg.OAuth2.Issuer,
+			Audience: cfg.OAuth2.Audience,
+			AudienceRule: jwt.AudienceRule{
+				AnyAudience: audRule.AnyAudience,
+				AnyOf:       audRule.AnyOf,
+				AllOf:       audRule.AllOf,
+				Blocklist:   audRule.Blocklist,
+			},
+			AllowedAlgs: cfg.OAuth2.AllowedAlgs,
+		}, prov)
+		if err != nil {
+			return nil, fmt.Errorf("init jwt validator: %w", err)
+		}
+		e.jwtValidator = jv
+
+		// Introspection client
+		ic, err := introspect.New(introspect.Config{
+			Endpoint:     cfg.OAuth2.Introspection.Endpoint,
+			ClientID:     cfg.OAuth2.Introspection.ClientID,
+			ClientSecret: cfg.OAuth2.Introspection.ClientSecret,
+			Timeout:      cfg.OAuth2.Introspection.Timeout,
+			Auth: introspect.ClientAuth{
+				Kind:         introspect.ClientAuthKind(cfg.OAuth2.Introspection.Auth.Kind),
+				ClientID:     cfg.OAuth2.Introspection.Auth.ClientID,
+				ClientSecret: cfg.OAuth2.Introspection.Auth.ClientSecret,
+				HeaderName:   cfg.OAuth2.Introspection.Auth.HeaderName,
+				HeaderValue:  cfg.OAuth2.Introspection.Auth.HeaderValue,
+			},
+			TokenTransport: introspect.TokenTransport{
+				Kind:   introspect.TokenTransportKind(cfg.OAuth2.Introspection.TokenTransport.Kind),
+				Field:  cfg.OAuth2.Introspection.TokenTransport.Field,
+				Header: cfg.OAuth2.Introspection.TokenTransport.Header,
+				Prefix: cfg.OAuth2.Introspection.TokenTransport.Prefix,
+			},
+			ExtraBody:    cfg.OAuth2.Introspection.ExtraBody,
+			ExtraHeaders: cfg.OAuth2.Introspection.ExtraHeaders,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("init introspection client: %w", err)
+		}
+		e.introClient = ic
 	}
-	e.introClient = ic
+
+	// Compile Lua policy if enabled
+	if cfg.Policies.Lua.Enabled && cfg.Policies.Lua.Script != "" {
+		cp, err := luaengine.Compile(cfg.Policies.Lua.Script)
+		if err != nil {
+			return nil, fmt.Errorf("compile lua policy: %w", err)
+		}
+		e.luaPolicy = cp
+	}
 
 	return e, nil
 }
@@ -246,6 +313,13 @@ func (e *Engine) Verify(ctx context.Context, token string) (*Result, error) {
 	pol := e.selectClaimPolicy(vr.tokenType)
 	if len(pol.ApplyTo) == 0 || slices.Contains(pol.ApplyTo, vr.tokenType) {
 		if err := pol.Validate(vr.claims); err != nil {
+			return nil, err
+		}
+	}
+
+	// Apply Lua policy (if enabled, runs after declarative claim policy)
+	if e.luaPolicy != nil {
+		if err := e.luaPolicy.Evaluate(vr.claims, string(vr.tokenType)); err != nil {
 			return nil, err
 		}
 	}

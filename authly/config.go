@@ -7,15 +7,15 @@ import (
 
 // AuthMode selects the top-level authentication mode.
 //
-// Security: Only OAuth2 is currently supported. Basic mode is reserved
-// for future work and is rejected by validation.
+// Security: OAuth2 and Basic modes are supported.
+// Mixed mode uses AuthModeOAuth2 with BasicAuth.Enabled=true on the Config.
 type AuthMode string
 
 // Supported AuthMode values.
 const (
 	// AuthModeOAuth2 enables OAuth 2.0 style verification (JWT and/or opaque introspection).
 	AuthModeOAuth2 AuthMode = "oauth2"
-	// AuthModeBasic is not supported by this library and will be rejected.
+	// AuthModeBasic enables Basic Authentication (username/password with bcrypt).
 	AuthModeBasic AuthMode = "basic"
 )
 
@@ -37,9 +37,10 @@ const (
 // Concurrency: Config is immutable after passing to New; do not mutate concurrently.
 // Security: Set Issuer/Audience and algorithms to enforce constraints.
 type Config struct {
-	Mode     AuthMode
-	OAuth2   OAuth2Config
-	Policies Policies
+	Mode      AuthMode
+	OAuth2    OAuth2Config
+	BasicAuth BasicAuthConfig
+	Policies  Policies
 }
 
 // OAuth2Config configures OAuth2 verification.
@@ -53,9 +54,15 @@ type OAuth2Config struct {
 	Audience    string
 	AllowedAlgs []string
 
+	// AudienceRule provides rich audience validation (wildcard, AND/OR, blocklist).
+	// If set (non-zero), it overrides the legacy Audience string field.
+	AudienceRule AudienceRule
+
 	JWKSURL        string
 	JWKSCacheTTL   time.Duration
 	AllowStaleJWKS bool
+
+	JWKS JWKSConfig
 
 	Introspection         IntrospectionConfig
 	IntrospectionCacheTTL time.Duration
@@ -64,12 +71,94 @@ type OAuth2Config struct {
 	Opaque OpaquePolicy
 }
 
-// IntrospectionConfig holds RFC 7662 endpoint settings.
-type IntrospectionConfig struct {
-	Endpoint     string
+// TokenTransportKind selects how the token is sent to the introspection endpoint.
+type TokenTransportKind string
+
+const (
+	// TokenTransportBody sends the token in the POST body (default, RFC 7662).
+	TokenTransportBody TokenTransportKind = "body"
+	// TokenTransportHeader sends the token in a request header.
+	TokenTransportHeader TokenTransportKind = "header"
+)
+
+// TokenTransport controls how the token is delivered to the introspection endpoint.
+type TokenTransport struct {
+	Kind   TokenTransportKind
+	Field  string // body field name, default "token"
+	Header string // header name when Kind == header, default "Authorization"
+	Prefix string // header value prefix when Kind == header, e.g. "Bearer "
+}
+
+// ClientAuthKind selects how client credentials are sent.
+type ClientAuthKind string
+
+const (
+	ClientAuthNone   ClientAuthKind = "none"
+	ClientAuthBasic  ClientAuthKind = "basic"
+	ClientAuthBody   ClientAuthKind = "body"
+	ClientAuthHeader ClientAuthKind = "header"
+	ClientAuthBearer ClientAuthKind = "bearer"
+)
+
+// ClientAuth configures client authentication for introspection or JWKS requests.
+type ClientAuth struct {
+	Kind         ClientAuthKind
 	ClientID     string
 	ClientSecret string
-	Timeout      time.Duration
+	HeaderName   string
+	HeaderValue  string
+}
+
+// IntrospectionConfig holds RFC 7662 endpoint settings.
+type IntrospectionConfig struct {
+	Endpoint       string
+	ClientID       string
+	ClientSecret   string
+	Timeout        time.Duration
+	Auth           ClientAuth
+	TokenTransport TokenTransport
+	ExtraBody      map[string]string
+	ExtraHeaders   map[string]string
+}
+
+// JWKSAuth configures authentication for JWKS endpoint requests.
+type JWKSAuth struct {
+	Kind        ClientAuthKind
+	Username    string
+	Password    string
+	HeaderName  string
+	HeaderValue string
+	BearerToken string
+}
+
+// JWKSConfig holds JWKS endpoint settings with optional authentication.
+type JWKSConfig struct {
+	URL          string
+	CacheTTL     time.Duration
+	Auth         JWKSAuth
+	ExtraHeaders map[string]string
+}
+
+// AudienceRule configures rich audience validation for JWT tokens.
+//
+// Matching logic order:
+//  1. If Blocklist has any match => reject (always wins)
+//  2. If AnyAudience=true => accept (skip allow checks, but still apply blocklist)
+//  3. If AllOf non-empty => require all present
+//  4. If AnyOf non-empty => require at least one present
+//  5. If both AllOf and AnyOf are empty => do not enforce audience
+type AudienceRule struct {
+	// AnyAudience means do not enforce aud at all ("*").
+	AnyAudience bool
+
+	// AnyOf: token aud must contain at least one of these values (OR).
+	AnyOf []string
+
+	// AllOf: token aud must contain all of these values (AND).
+	AllOf []string
+
+	// Blocklist: if token aud contains ANY of these values => reject.
+	Blocklist []string
 }
 
 // OpaquePolicy configures RFC 7662 opaque-token semantics.
@@ -85,6 +174,12 @@ type OpaquePolicy struct {
 	ExposeActiveClaim bool
 }
 
+// LuaClaimsPolicy configures an optional Lua script for advanced claim validation.
+type LuaClaimsPolicy struct {
+	Enabled bool
+	Script  string
+}
+
 // Policies configures claim and actor validation.
 type Policies struct {
 	// Backward compatibility: TokenClaims applies to both types unless JWTClaims/OpaqueClaims override.
@@ -93,6 +188,7 @@ type Policies struct {
 	JWTClaims    ClaimPolicy
 	OpaqueClaims ClaimPolicy
 	Actor        ActorPolicy
+	Lua          LuaClaimsPolicy
 }
 
 func (c *Config) setDefaults() {
@@ -124,10 +220,18 @@ func (c *Config) setDefaults() {
 
 // Validate checks Config correctness and required fields per mode.
 func (c Config) Validate() error {
-	if c.Mode == AuthModeBasic {
-		return ErrUnsupportedMode
-	}
-	if c.Mode != AuthModeOAuth2 {
+	switch c.Mode {
+	case AuthModeBasic:
+		if !c.BasicAuth.Enabled {
+			return errors.New("basic auth mode requires BasicAuth.Enabled=true")
+		}
+		if c.BasicAuth.Validator == nil && len(c.BasicAuth.Users) == 0 {
+			return errors.New("basic auth requires Users map or Validator function")
+		}
+		return nil
+	case AuthModeOAuth2:
+		// continue to OAuth2 validation below
+	default:
 		return errors.New("unsupported or empty mode")
 	}
 	switch c.OAuth2.Mode {

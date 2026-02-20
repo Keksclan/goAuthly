@@ -1,105 +1,112 @@
 # Architecture
 
-This document outlines how goAuthly verifies tokens and where pluggable components fit. All flows below are library-only — no adapters or servers are included.
+goAuthly follows a simple, layered design: **Adapters → Engine → Verifiers → Policies → Result**.
 
-## High-level Flow (Mermaid)
+There are no plugin registries, no abstract factory chains, no middleware-of-middleware. Just a clean pipeline that takes credentials in and hands a decision out.
+
+---
+
+## Full Flow
 
 ```mermaid
 flowchart TD
-    A[Engine.Verify(token)] --> B{Detect type}
-    B -->|JWT| C[verifyJWT]
-    B -->|Opaque| D[verifyOpaque]
-    C --> E[JWT Validator]
-    E --> F[Get key by kid from JWK Manager]
-    F --> G[Verify signature + claims]
-    G --> H[Policies: claims + actor]
-    D --> I[Introspection client]
-    I --> J[Cache by token hash]
-    J --> K[Parse response -> claims]
-    K --> H
-    H --> L[Result]
+    Client -->|"Authorization header"| Adapter
+    Adapter -->|"Bearer token"| Engine
+    Adapter -->|"Basic credentials"| Engine
+    Engine -->|JWT| JWKS["JWKS Validator"]
+    Engine -->|Opaque| Introspection["RFC 7662 Introspection"]
+    Engine -->|Basic| BasicAuth["bcrypt Verifier"]
+    JWKS --> Policies
+    Introspection --> Policies
+    BasicAuth --> Policies
+    Policies -->|"Declarative"| ClaimPolicy["Claim Policy"]
+    Policies -->|"Scripted"| LuaPolicy["Lua Policy"]
+    Policies -->|"Actor"| ActorPolicy["Actor Policy"]
+    ClaimPolicy --> Result
+    LuaPolicy --> Result
+    ActorPolicy --> Result
 ```
 
-## JWT Flow (Mermaid)
+## Policy Evaluation Order
+
+Policies are evaluated in a strict, deterministic order. If any step rejects, the pipeline stops and returns an error.
 
 ```mermaid
-sequenceDiagram
-    participant App
-    participant Engine
-    participant JWT as JWT Validator
-    participant JWK as JWKS Manager
-
-    App->>Engine: Verify(ctx, jwt)
-    Engine->>JWT: Validate(ctx, token)
-    JWT->>JWT: Parse header (kid, alg)
-    JWT->>JWK: GetKey(ctx, kid)
-    JWK-->>JWT: rsa/ecdsa public key
-    JWT->>JWT: Verify signature + times + aud/iss
-    Engine->>Engine: Policies (claims, actor)
-    Engine-->>App: Result
+flowchart TD
+    V["Verification (JWT / Opaque / Basic)"] --> CP["Declarative Claim Policy"]
+    CP -->|pass| LP["Lua Policy (if enabled)"]
+    CP -->|fail| Reject1["❌ Reject"]
+    LP -->|pass| AP["Actor Policy (if enabled)"]
+    LP -->|fail| Reject2["❌ Reject"]
+    AP -->|pass| PP["Post-processing (opaque: hide active claim)"]
+    AP -->|fail| Reject3["❌ Reject"]
+    PP --> OK["✅ Result"]
 ```
 
-## Opaque Flow (Mermaid)
+**Order:**
+1. **Token verification** — JWT signature/claims, introspection active check, or bcrypt comparison.
+2. **Declarative claim policy** — required, denied, allowlisted, enforced values.
+3. **Lua policy** — conditional scripted checks, runs after declarative.
+4. **Actor policy** — extract and validate RFC 8693 actor claims.
+5. **Post-processing** — opaque-specific cleanup (hide `active` claim unless configured).
 
-```mermaid
-sequenceDiagram
-    participant App
-    participant Engine
-    participant INT as Introspection Client
-    participant Cache
+## Adapter Integration Model
 
-    App->>Engine: Verify(ctx, opaque)
-    Engine->>Cache: Lookup(hash(token))
-    Cache-->>Engine: hit/miss
-    Engine->>INT: POST /introspect
-    INT-->>Engine: IntrospectionResponse
-    Engine->>Cache: Store(active only)
-    Engine->>Engine: Convert to claims
-    Engine->>Engine: Policies (claims, actor)
-    Engine-->>App: Result
-```
+Adapters are intentionally thin. They do three things:
 
-## Policy Validation Flow (Mermaid)
+1. **Extract** the Authorization header (Bearer or Basic).
+2. **Call** `Engine.Verify()` or `Engine.VerifyBasic()`.
+3. **Inject** the `Result` into the framework's context mechanism.
 
 ```mermaid
 flowchart LR
-    A[Claims map] --> B{Required}
-    B -->|missing| X[Error]
-    B -->|ok| C{Denylist}
-    C -->|present| X
-    C -->|ok| D{Allowlist}
-    D -->|unknown claim| X
-    D -->|ok| E{Enforced values}
-    E -->|violation| X
-    E -->|ok| F[Actor extraction + checks]
-    F -->|violation| X
-    F -->|ok| G[Success]
+    subgraph Adapter["Adapter (grpc / fiber / fasthttp)"]
+        Extract["Extract credentials"] --> Call["Call Engine"]
+        Call --> Inject["Inject Result into context"]
+    end
+    subgraph Engine
+        Verify["Verify / VerifyBasic"]
+    end
+    Extract --> Verify
+    Verify --> Inject
 ```
 
-## Components
+No business logic lives in adapters. They don't validate claims, check policies, or cache anything. That's the Engine's job.
 
-- Engine: orchestrates verification, caches, and policies.
-- JWT Validator: parses and validates JWTs; gets keys via JWK Manager.
-- JWK Manager: fetches and caches JWKS; supports stale reads when enabled.
-- Introspection Client: calls RFC 7662 endpoint and maps extras.
-- Cache: minimal TTL cache abstraction used for JWKS and introspection.
+## Package Layout
 
-## Token Type Semantics
-
-- JWT tokens follow RFC 7519 semantics: signature verification, standard time claims, issuer/audience checks. There is no `active` concept for JWTs.
-- Opaque tokens follow RFC 7662 introspection semantics: the response must include `active` and, by default, it must be `true` to accept the token. Other fields are treated as claims.
-- The Engine now separates verification paths internally via distinct verifiers and policies per token type.
-- The `Result` exposes the token type and the source pipeline used: `Type` is `jwt` or `opaque`, and `Source` is `jwt` or `introspection`.
-- The `active` attribute exists only for opaque (introspection) and is validated internally. Unless explicitly configured to expose, it is removed from `Result.Claims` after validation.
-
-```mermaid
-flowchart TD
-    Token --> DetectType
-    DetectType -->|JWT| JWTVerifier
-    DetectType -->|Opaque| OpaqueVerifier
-    JWTVerifier --> JWTPolicies
-    OpaqueVerifier --> ActiveCheck
-    ActiveCheck --> OpaquePolicies
-    JWTPolicies --> Result
-    OpaquePolicies --> Result
 ```
+authly/              Public API: Config, Engine, Result, Policies
+├── config.go        Configuration types and validation
+├── engine.go        Engine: Verify, VerifyBasic, caching, policy pipeline
+├── basic.go         BasicAuthConfig and VerifyBasic method
+├── policy.go        ClaimPolicy, ActorPolicy
+├── errors.go        Sentinel errors
+└── options.go       Functional options (WithHTTPClient, WithCache, etc.)
+
+internal/
+├── basic/           bcrypt-based Basic Auth verifier
+├── cache/           Ristretto cache wrapper
+├── core/            Shared verifier interface
+├── jwk/             JWKS manager with HTTP fetching and caching
+├── luaengine/       Lua policy compiler and evaluator
+└── oauth/
+    ├── introspect/  RFC 7662 introspection client
+    └── jwt/         JWT validator with JWKS key provider
+
+adapters/
+├── grpc/            Unary + stream interceptors
+├── fiber/           Fiber middleware
+└── fasthttp/        fasthttp middleware wrapper
+
+tests/               All tests (engine, policies, adapters, no-panic)
+docs/                Documentation
+```
+
+## Design Principles
+
+- **No panics.** Every error path returns an error. Type assertions use the comma-ok pattern.
+- **No background goroutines.** JWKS refresh and cache eviction happen on the request path. You can add your own refresh loop if needed.
+- **Immutable after construction.** Config and Engine are safe for concurrent reads. No shared mutable state.
+- **Thin adapters.** Framework-specific code is minimal. All logic lives in the Engine.
+- **Constant-time security.** bcrypt comparison for passwords, SHA-256 hashing for cache keys.

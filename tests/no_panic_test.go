@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -112,4 +113,133 @@ func TestVerify_NoPanics(t *testing.T) {
 			_, _ = eng.Verify(ctx, tok)
 		})
 	}
+}
+
+func TestVerify_NoPanicsWithLuaPolicy(t *testing.T) {
+	ts := startDemoServer(t)
+	defer ts.Close()
+
+	cfg := authly.Config{
+		Mode: authly.AuthModeOAuth2,
+		OAuth2: authly.OAuth2Config{
+			Mode:                  authly.OAuth2JWTAndOpaque,
+			Issuer:                "https://issuer.demo",
+			Audience:              "demo-api",
+			AllowedAlgs:           []string{"RS256"},
+			JWKSURL:               ts.URL + "/.well-known/jwks.json",
+			JWKSCacheTTL:          time.Minute,
+			AllowStaleJWKS:        true,
+			Introspection:         authly.IntrospectionConfig{Endpoint: ts.URL + "/introspect", Timeout: time.Second},
+			IntrospectionCacheTTL: 10 * time.Second,
+		},
+		Policies: authly.Policies{
+			Lua: authly.LuaClaimsPolicy{
+				Enabled: true,
+				Script:  `if has("bad") then reject("bad claim found") end`,
+			},
+		},
+	}
+	eng, err := authly.New(cfg)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	ctx := context.Background()
+	malformedTokens := []string{
+		"", "abc", "a.b", "a.b.c",
+		"opaque-json-bad", "opaque-500",
+	}
+
+	for _, tok := range malformedTokens {
+		assertNotPanics(t, func() {
+			_, _ = eng.Verify(ctx, tok)
+		})
+	}
+}
+
+func TestNoPanic_BasicAuth(t *testing.T) {
+	eng := newBasicEngine(t, authly.BasicAuthConfig{
+		Enabled: true,
+		Users: map[string]string{
+			"admin": hashPassword(t, "pass"),
+		},
+	})
+	ctx := context.Background()
+
+	edgeCases := []struct{ user, pass string }{
+		{"", ""},
+		{"admin", ""},
+		{"", "pass"},
+		{"admin", "pass"},
+		{"admin", "wrong"},
+		{"unknown", "pass"},
+		{"\x00\xff", "\x00\xff"},
+		{"admin", string(make([]byte, 10000))},
+	}
+
+	for _, tc := range edgeCases {
+		assertNotPanics(t, func() {
+			_, _ = eng.VerifyBasic(ctx, tc.user, tc.pass)
+		})
+	}
+
+	// Custom validator that returns various results
+	for _, validatorResult := range []struct {
+		ok  bool
+		err error
+	}{
+		{true, nil},
+		{false, nil},
+		{false, errors.New("boom")},
+	} {
+		vr := validatorResult
+		eng2 := newBasicEngine(t, authly.BasicAuthConfig{
+			Enabled: true,
+			Validator: func(_ context.Context, _, _ string) (bool, error) {
+				return vr.ok, vr.err
+			},
+		})
+		assertNotPanics(t, func() {
+			_, _ = eng2.VerifyBasic(ctx, "x", "y")
+		})
+	}
+}
+
+func TestNoPanic_LuaEngineEdgeCases(t *testing.T) {
+	// Ensure the Lua engine doesn't panic with various edge cases
+	assertNotPanics(t, func() {
+		_, _ = authly.New(authly.Config{
+			Mode: authly.AuthModeOAuth2,
+			OAuth2: authly.OAuth2Config{
+				Mode:          authly.OAuth2OpaqueOnly,
+				Introspection: authly.IntrospectionConfig{Endpoint: "http://localhost/introspect", Timeout: time.Second},
+			},
+			Policies: authly.Policies{
+				Lua: authly.LuaClaimsPolicy{
+					Enabled: true,
+					Script:  `-- empty script`,
+				},
+			},
+		})
+	})
+
+	// Invalid Lua script should return error, not panic
+	assertNotPanics(t, func() {
+		_, err := authly.New(authly.Config{
+			Mode: authly.AuthModeOAuth2,
+			OAuth2: authly.OAuth2Config{
+				Mode:          authly.OAuth2OpaqueOnly,
+				Introspection: authly.IntrospectionConfig{Endpoint: "http://localhost/introspect", Timeout: time.Second},
+			},
+			Policies: authly.Policies{
+				Lua: authly.LuaClaimsPolicy{
+					Enabled: true,
+					Script:  `this is not valid lua %%%`,
+				},
+			},
+		})
+		if err == nil {
+			t.Error("expected error for invalid lua script")
+		}
+	})
 }
