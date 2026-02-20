@@ -11,10 +11,10 @@ import (
 	"github.com/keksclan/goAuthly/internal/oauth/introspect"
 )
 
-func TestIntrospectDefaultTimeoutWhenZero(t *testing.T) {
-	// A server that delays longer than the default 5s timeout.
+func TestIntrospectNoTimeoutWhenZero(t *testing.T) {
+	// A server that delays 2s; with Timeout==0 (no timeout) the request should succeed.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(6 * time.Second)
+		time.Sleep(2 * time.Second)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"active":true}`))
 	}))
@@ -22,22 +22,15 @@ func TestIntrospectDefaultTimeoutWhenZero(t *testing.T) {
 
 	c, err := introspect.New(introspect.Config{
 		Endpoint: server.URL,
-		Timeout:  0, // zero → should default to 5s
+		Timeout:  0, // zero → no timeout
 	})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 
-	start := time.Now()
 	_, err = c.Introspect(t.Context(), "tok")
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("expected timeout error, got nil")
-	}
-	// Should have timed out around 5s, not waited the full 6s
-	if elapsed < 4*time.Second || elapsed >= 6*time.Second {
-		t.Fatalf("expected timeout around 5s, got %v", elapsed)
+	if err != nil {
+		t.Fatalf("expected no error with zero timeout (no timeout), got %v", err)
 	}
 }
 
