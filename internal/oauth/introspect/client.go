@@ -17,6 +17,9 @@ var ErrTokenInactive = errors.New("token is inactive")
 // maxResponseSize limits the size of introspection HTTP responses to prevent memory bombs.
 const maxResponseSize = 1 << 20 // 1 MB
 
+// defaultTimeout is the fallback HTTP client timeout when none (or zero) is configured.
+const defaultTimeout = 5 * time.Second
+
 // TokenTransportKind selects how the token is delivered.
 type TokenTransportKind string
 
@@ -89,9 +92,13 @@ func New(cfg Config) (*Client, error) {
 	if tt.Kind == TokenTransportHeader && tt.Header == "" {
 		tt.Header = "Authorization"
 	}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
 	return &Client{
 		endpoint:       cfg.Endpoint,
-		httpc:          &http.Client{Timeout: cfg.Timeout},
+		httpc:          &http.Client{Timeout: timeout},
 		clientID:       cfg.ClientID,
 		clientSecret:   cfg.ClientSecret,
 		auth:           cfg.Auth,
