@@ -41,6 +41,36 @@ func TestIntrospectDefaultTimeoutWhenZero(t *testing.T) {
 	}
 }
 
+func TestIntrospectDefaultTimeoutWhenNegative(t *testing.T) {
+	// A server that delays longer than the default 5s timeout.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(6 * time.Second)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"active":true}`))
+	}))
+	defer server.Close()
+
+	c, err := introspect.New(introspect.Config{
+		Endpoint: server.URL,
+		Timeout:  -1 * time.Second, // negative → should default to 5s
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	start := time.Now()
+	_, err = c.Introspect(context.Background(), "tok")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	// Should have timed out around 5s, not waited the full 6s
+	if elapsed >= 6*time.Second {
+		t.Fatalf("request waited too long (%v), timeout was not enforced", elapsed)
+	}
+}
+
 func TestIntrospectRespectsContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(10 * time.Second)
