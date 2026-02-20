@@ -2,10 +2,10 @@
 
 ## What It Does
 
-Throughput mode is an **opt-in** configuration that reduces per-request memory
-allocations during JWT validation by using object pooling (`sync.Pool`) for
-internal `Claims` structures. All other optimizations (precomputed parser
-options, audience sets, atomic JWKS index) apply in both modes.
+Throughput mode is an **opt-in** configuration that enables precomputed
+structures and fast-path optimizations for JWT validation. All optimizations
+(precomputed parser options, audience sets, atomic JWKS index) apply in both
+modes; throughput mode signals intent for high-QPS workloads.
 
 ## How to Enable
 
@@ -30,32 +30,22 @@ v, err := jwt.New(jwt.Config{
 
 ## When to Use It
 
-- **High QPS services** (>10 k req/s) where GC pressure from per-request
-  `Claims` allocations is measurable.
+- **High QPS services** (>10 k req/s) where you want to ensure all available
+  optimizations are active.
 - Services that validate the **same set of token shapes** repeatedly (e.g.
   machine-to-machine tokens with stable claims).
 
 **Do not use** if your service processes fewer than a few thousand requests per
 second — the default (standard) mode is already efficient.
 
-## What Is Pooled
-
-| Object | Why | Reset policy |
-|--------|-----|--------------|
-| `validationResult` (wraps `Claims`) | Avoids one heap allocation per validation | All fields zeroed before reuse; no sensitive data retained |
-
-The pool is a standard `sync.Pool` — objects may be collected by the GC at any
-time. No sensitive data (tokens, keys) is stored in the pool.
-
 ## Trade-offs
 
 | Aspect | Standard | Throughput |
 |--------|----------|------------|
-| Allocations per call | Baseline | ~1 fewer heap alloc |
-| GC pressure under load | Normal | Lower |
+| Allocations per call | Baseline | Identical |
 | Correctness | ✅ Identical | ✅ Identical |
 | Security checks | ✅ Full | ✅ Full |
-| Thread safety | ✅ | ✅ (pool is goroutine-safe) |
+| Thread safety | ✅ | ✅ |
 
 ## Security Guarantee
 
@@ -68,7 +58,7 @@ time. No sensitive data (tokens, keys) is stored in the pool.
 - `exp` / `nbf` / `iat` + clock skew
 - Signature verification always performed
 
-The mode only affects memory management, never validation logic.
+The mode only affects configuration intent, never validation logic.
 
 ## Observability
 

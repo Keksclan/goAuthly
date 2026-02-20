@@ -37,7 +37,7 @@ Optional `MetricsCollector` callback classifies every validation outcome
 ## Benchmark Command
 
 ```bash
-go test -bench BenchmarkJWT -benchmem -count=5 ./tests/
+go test -bench "BenchmarkJWT|BenchmarkJWKS|BenchmarkValidate_" -benchmem -count=5 ./tests/
 ```
 
 ## Benchmark Results
@@ -57,12 +57,15 @@ go test -bench "BenchmarkJWT|BenchmarkJWKS|BenchmarkValidate_" -benchmem -count=
 | `BenchmarkJWTValidate_Expired` | ~58,000 | 4304 | 71 | Rejected by parser (no claims extraction) |
 | `BenchmarkJWKSKeySelection` | ~16 | 0 | 0 | O(1) map lookup, zero allocs |
 | `BenchmarkValidate_Standard` | ~61,000 | 4536 | 75 | Standard mode |
-| `BenchmarkValidate_Throughput` | ~60,000 | 4536 | 75 | Throughput mode (pooling) |
+| `BenchmarkValidate_Throughput` | ~60,000 | 4536 | 75 | Throughput mode |
 
 Key observations:
 - **JWKS key selection is O(1)** with zero allocations (~16 ns).
 - **Invalid tokens are rejected faster** than valid ones (fewer allocations on early exit).
 - **Parser options are precomputed** — no per-request slice allocation.
 - **Audience sets are precomputed** — no per-request map construction.
+- **Standard vs Throughput allocations are identical.** Both modes use the same
+  allocation strategy; throughput mode enables precomputed structures and signals
+  intent for high-QPS workloads.
 - The RSA signature verification dominates (~55 µs), so structural optimizations
   improve the non-crypto overhead proportion significantly.

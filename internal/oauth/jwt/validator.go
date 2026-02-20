@@ -4,16 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/keksclan/goAuthly/internal/jwk"
 )
-
-// defaultClockSkew is used when ClockSkew is zero.
-const defaultClockSkew = 30 * time.Second
 
 // AudienceRule mirrors authly.AudienceRule for internal use.
 type AudienceRule struct {
@@ -30,7 +26,7 @@ const (
 	// ValidatorModeStandard is the default mode with no special optimizations.
 	ValidatorModeStandard ValidatorMode = "standard"
 	// ValidatorModeThroughput enables high-throughput optimizations such as
-	// object pooling and precomputed structures for reduced allocations.
+	// precomputed structures for reduced allocations.
 	ValidatorModeThroughput ValidatorMode = "throughput"
 )
 
@@ -96,16 +92,7 @@ type Validator struct {
 	audBlockSet     map[string]struct{}
 	audRuleResolved bool
 	audRule         AudienceRule
-	// throughput mode: pool for Claims objects
-	claimsPool *sync.Pool
-	metrics    MetricsCollector
-	// highThroughput caches the mode check result
-	highThroughput bool
-}
-
-// validationResult is pooled in throughput mode to reduce allocations.
-type validationResult struct {
-	claims Claims
+	metrics         MetricsCollector
 }
 
 func New(cfg Config, keys jwk.Provider) (*Validator, error) {
@@ -120,9 +107,6 @@ func New(cfg Config, keys jwk.Provider) (*Validator, error) {
 		}
 	}
 	v.clockSkew = cfg.ClockSkew
-	if v.clockSkew == 0 {
-		v.clockSkew = defaultClockSkew
-	}
 
 	// Precompute parser options once.
 	v.parserOpts = []jwt.ParserOption{
@@ -136,14 +120,7 @@ func New(cfg Config, keys jwk.Provider) (*Validator, error) {
 	// Precompute the effective audience rule and lookup sets.
 	v.resolveAudienceRule()
 
-	// Throughput mode setup.
 	v.metrics = cfg.Metrics
-	if cfg.Mode == ValidatorModeThroughput {
-		v.highThroughput = true
-		v.claimsPool = &sync.Pool{
-			New: func() any { return &validationResult{} },
-		}
-	}
 
 	return v, nil
 }
@@ -183,11 +160,13 @@ func (v *Validator) resolveAudienceRule() {
 }
 
 func (v *Validator) Validate(ctx context.Context, tokenStr string) (*Claims, error) {
+	keyfuncEmitted := false
 	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
 		// Algorithm check inside keyfunc as a defense-in-depth measure.
 		if v.allowedAlgSet != nil {
 			if _, ok := v.allowedAlgSet[t.Method.Alg()]; !ok {
 				v.emitFailure(FailReasonAlg)
+				keyfuncEmitted = true
 				return nil, fmt.Errorf("algorithm not allowed")
 			}
 		}
@@ -197,11 +176,13 @@ func (v *Validator) Validate(ctx context.Context, tokenStr string) (*Claims, err
 		// When JWKS is enabled, kid is mandatory.
 		if v.cfg.JWKSEnabled && kid == "" {
 			v.emitFailure(FailReasonKid)
+			keyfuncEmitted = true
 			return nil, fmt.Errorf("token missing required kid header")
 		}
 
 		if kid == "" {
 			v.emitFailure(FailReasonKid)
+			keyfuncEmitted = true
 			return nil, fmt.Errorf("missing kid in header")
 		}
 
@@ -209,8 +190,10 @@ func (v *Validator) Validate(ctx context.Context, tokenStr string) (*Claims, err
 	}, v.parserOpts...)
 
 	if err != nil {
-		// Classify the failure for metrics when not already emitted.
-		v.classifyParseError(err)
+		// Classify the failure for metrics only when not already emitted by the keyfunc.
+		if !keyfuncEmitted {
+			v.classifyParseError(err)
+		}
 		return nil, fmt.Errorf("token validation failed: %w", err)
 	}
 
@@ -273,14 +256,8 @@ func (v *Validator) Validate(ctx context.Context, tokenStr string) (*Claims, err
 	return res, nil
 }
 
-// acquireClaims returns a Claims pointer, using the pool in throughput mode.
+// acquireClaims returns a freshly allocated Claims pointer.
 func (v *Validator) acquireClaims() *Claims {
-	if v.highThroughput {
-		vr := v.claimsPool.Get().(*validationResult)
-		// Reset all fields to avoid leaking data from previous validations.
-		vr.claims = Claims{}
-		return &vr.claims
-	}
 	return &Claims{}
 }
 

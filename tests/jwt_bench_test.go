@@ -483,6 +483,94 @@ func TestMetricsCollector(t *testing.T) {
 	}
 }
 
+// ---------- Metrics: no double emission for keyfunc errors ----------
+
+func TestMetricsCollector_NoDoubleEmission(t *testing.T) {
+	priv, pub := mustRSAKey(t)
+	kid := "dbl-key"
+	kp := &mockKeyProvider{keys: map[string]any{kid: pub}}
+
+	t.Run("missing kid emits exactly one failure", func(t *testing.T) {
+		m := &testMetrics{}
+		cfg := oauthjwt.Config{
+			Issuer:      "https://dbl.test",
+			Audience:    "api",
+			AllowedAlgs: []string{"RS256"},
+			JWKSEnabled: true,
+			Metrics:     m,
+		}
+		v, err := oauthjwt.New(cfg, kp)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Create a token without kid header.
+		tok := gojwt.NewWithClaims(gojwt.SigningMethodRS256, gojwt.MapClaims{
+			"iss": "https://dbl.test",
+			"aud": "api",
+			"sub": "u",
+			"exp": time.Now().Add(time.Hour).Unix(),
+		})
+		tokenStr, err := tok.SignedString(priv)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, _ = v.Validate(t.Context(), tokenStr)
+		if got := m.failed.Load(); got != 1 {
+			t.Fatalf("expected exactly 1 failure metric, got %d", got)
+		}
+		if got := m.reasonCount(oauthjwt.FailReasonKid); got != 1 {
+			t.Fatalf("expected 1 kid failure, got %d", got)
+		}
+		// Ensure no spurious parse failure was emitted.
+		if got := m.reasonCount(oauthjwt.FailReasonParse); got != 0 {
+			t.Fatalf("expected 0 parse failures, got %d", got)
+		}
+	})
+
+	t.Run("algorithm mismatch emits exactly one failure", func(t *testing.T) {
+		m := &testMetrics{}
+		secret := []byte("super-secret-key-for-hmac-256-xx")
+		hmacKP := &mockKeyProvider{keys: map[string]any{"hmac-kid": secret}}
+		cfg := oauthjwt.Config{
+			Issuer:      "https://dbl.test",
+			Audience:    "api",
+			AllowedAlgs: []string{"RS256"},
+			JWKSEnabled: true,
+			Metrics:     m,
+		}
+		v, err := oauthjwt.New(cfg, hmacKP)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Sign with HS256 while only RS256 is allowed.
+		tok := gojwt.NewWithClaims(gojwt.SigningMethodHS256, gojwt.MapClaims{
+			"iss": "https://dbl.test",
+			"aud": "api",
+			"sub": "u",
+			"exp": time.Now().Add(time.Hour).Unix(),
+		})
+		tok.Header["kid"] = "hmac-kid"
+		tokenStr, err := tok.SignedString(secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, _ = v.Validate(t.Context(), tokenStr)
+		if got := m.failed.Load(); got != 1 {
+			t.Fatalf("expected exactly 1 failure metric, got %d", got)
+		}
+		if got := m.reasonCount(oauthjwt.FailReasonAlg); got != 1 {
+			t.Fatalf("expected 1 alg failure, got %d", got)
+		}
+		if got := m.reasonCount(oauthjwt.FailReasonParse); got != 0 {
+			t.Fatalf("expected 0 parse failures, got %d", got)
+		}
+	})
+}
+
 // ---------- IndexedKeyProvider test ----------
 
 func TestIndexedKeyProvider(t *testing.T) {

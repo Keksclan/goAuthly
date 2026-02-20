@@ -11,6 +11,10 @@ import (
 // Mixed mode uses AuthModeOAuth2 with BasicAuth.Enabled=true on the Config.
 type AuthMode string
 
+// ClockSkewUnset is a sentinel value for OAuth2Config.ClockSkew.
+// Pass this (or any negative duration) to disable clock-skew tolerance entirely.
+const ClockSkewUnset = -1 * time.Nanosecond
+
 // Supported AuthMode values.
 const (
 	// AuthModeOAuth2 enables OAuth 2.0 style verification (JWT and/or opaque introspection).
@@ -68,12 +72,13 @@ type OAuth2Config struct {
 	IntrospectionCacheTTL time.Duration
 
 	// ClockSkew is the maximum allowed time difference for exp, nbf, and iat
-	// validation. Default is 30 seconds if zero.
+	// validation. When left at zero, setDefaults() applies a 30-second default.
+	// Set to ClockSkewUnset (or any negative duration) to disable skew handling.
 	ClockSkew time.Duration
 
 	// HighThroughput enables throughput-optimised JWT validation.
-	// When true the validator precomputes more structures and uses object
-	// pooling to reduce per-request allocations. Default is false.
+	// When true the validator uses precomputed structures for reduced
+	// per-request overhead. Default is false.
 	HighThroughput bool
 
 	// Opaque controls opaque-token specific semantics.
@@ -220,6 +225,12 @@ func (c *Config) setDefaults() {
 	if !c.OAuth2.Opaque.RequireActive && !c.OAuth2.Opaque.ExposeActiveClaim {
 		// Distinguish default zero-values from explicit false by setting RequireActive true when both are zero-values
 		c.OAuth2.Opaque.RequireActive = true
+	}
+	// ClockSkew: zero → 30s default; negative → explicit opt-out (set to 0).
+	if c.OAuth2.ClockSkew == 0 {
+		c.OAuth2.ClockSkew = 30 * time.Second
+	} else if c.OAuth2.ClockSkew < 0 {
+		c.OAuth2.ClockSkew = 0
 	}
 	// Policies defaults are zero-values (permit all), Actor disabled by default
 	if c.Policies.Actor.ActorSubjectKey == "" {

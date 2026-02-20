@@ -1,6 +1,6 @@
 # Security Review — 2026-02-20
 
-Full repository scan of `github.com/Keksclan/goAuthly`.
+Full repository scan of `github.com/keksclan/goAuthly`.
 
 ## Findings
 

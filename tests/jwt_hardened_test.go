@@ -466,20 +466,20 @@ func TestHardenedJWT_IssuedInFuture(t *testing.T) {
 		{
 			name:        "iat far in future beyond default skew",
 			iat:         time.Now().Add(5 * time.Minute),
-			clockSkew:   0,
+			clockSkew:   30 * time.Second,
 			wantErr:     true,
 			errContains: "issued in the future",
 		},
 		{
 			name:      "iat slightly in future within default skew",
 			iat:       time.Now().Add(10 * time.Second),
-			clockSkew: 0, // default 30s
+			clockSkew: 30 * time.Second, // previously defaulted internally; now must be explicit
 			wantErr:   false,
 		},
 		{
 			name:      "iat in past is fine",
 			iat:       time.Now().Add(-5 * time.Minute),
-			clockSkew: 0,
+			clockSkew: 30 * time.Second,
 			wantErr:   false,
 		},
 	}
