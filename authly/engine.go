@@ -91,6 +91,7 @@ func (a *managerProviderAdapter) LoadFromURL(ctx context.Context, url string) er
 	a.url = url
 	return nil
 }
+func (a *managerProviderAdapter) Keys() map[string]any { return nil }
 
 // New creates a new Engine using cfg and optional Options.
 // Security: Ensure Issuer/Audience and algorithms are set to your expectations.

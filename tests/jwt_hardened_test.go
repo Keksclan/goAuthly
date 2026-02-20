@@ -25,6 +25,7 @@ func (p *staticKeyProvider) GetKey(_ context.Context, _ string) (any, error) {
 	return p.key, nil
 }
 func (p *staticKeyProvider) LoadFromURL(_ context.Context, _ string) error { return nil }
+func (p *staticKeyProvider) Keys() map[string]any                          { return nil }
 
 // hmacKeyProvider returns an HMAC key for any kid.
 type hmacKeyProvider struct {
@@ -35,6 +36,7 @@ func (p *hmacKeyProvider) GetKey(_ context.Context, _ string) (any, error) {
 	return p.secret, nil
 }
 func (p *hmacKeyProvider) LoadFromURL(_ context.Context, _ string) error { return nil }
+func (p *hmacKeyProvider) Keys() map[string]any                          { return nil }
 
 func TestHardenedJWT_InvalidAlgorithm(t *testing.T) {
 	// Token signed with HS256, AllowedAlgs only contains RS256 → expect rejection.

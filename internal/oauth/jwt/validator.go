@@ -3,6 +3,7 @@ package jwt
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -436,22 +437,49 @@ func NewIndexedKeyProvider(inner jwk.Provider) *IndexedKeyProvider {
 	return p
 }
 
-// RebuildIndex replaces the key index atomically with the provided kid->key map.
+// RebuildIndex replaces the key index atomically with a defensive copy of the
+// provided kid->key map, preventing aliasing with the caller's map.
 func (p *IndexedKeyProvider) RebuildIndex(keys map[string]any) {
-	p.index.Store(&KeyIndex{keys: keys})
+	cp := maps.Clone(keys)
+	p.index.Store(&KeyIndex{keys: cp})
 }
 
-// GetKey performs O(1) lookup by kid, falling back to the underlying provider.
+// GetKey performs O(1) lookup by kid. When the kid exists in the index it
+// still consults the underlying provider so that same-kid key rotations
+// (where the key material changed but the kid stayed the same) are detected.
+// If the inner provider returns a different key, the fresher key wins.
 func (p *IndexedKeyProvider) GetKey(ctx context.Context, kid string) (any, error) {
 	idx := p.index.Load()
-	if key, ok := idx.keys[kid]; ok {
-		return key, nil
+	indexKey, inIndex := idx.keys[kid]
+
+	// Always ask the inner provider for the freshest key.
+	innerKey, innerErr := p.inner.GetKey(ctx, kid)
+	if innerErr == nil {
+		return innerKey, nil
 	}
-	// Fallback to underlying provider (e.g. after rotation before index rebuild).
-	return p.inner.GetKey(ctx, kid)
+
+	// Inner failed but index had the kid – return the cached copy.
+	if inIndex {
+		return indexKey, nil
+	}
+
+	return nil, innerErr
 }
 
-// LoadFromURL delegates to the underlying provider.
+// LoadFromURL delegates to the underlying provider and rebuilds the index
+// atomically from the provider's current key set.
 func (p *IndexedKeyProvider) LoadFromURL(ctx context.Context, url string) error {
-	return p.inner.LoadFromURL(ctx, url)
+	if err := p.inner.LoadFromURL(ctx, url); err != nil {
+		return err
+	}
+	if keys := p.inner.Keys(); keys != nil {
+		p.RebuildIndex(keys)
+	}
+	return nil
+}
+
+// Keys returns a snapshot of the current index keys.
+func (p *IndexedKeyProvider) Keys() map[string]any {
+	idx := p.index.Load()
+	return maps.Clone(idx.keys)
 }
