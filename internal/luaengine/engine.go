@@ -86,7 +86,7 @@ func (cp *CompiledPolicy) EvaluateWithTimeout(claims map[string]any, tokenType s
 		key := L.CheckString(1)
 		if _, ok := claims[key]; !ok {
 			policyErr = fmt.Errorf("lua policy: required claim missing: %s", key)
-			L.RaiseError(policyErr.Error())
+			L.RaiseError("%s", policyErr.Error())
 		}
 		return 0
 	}))
@@ -97,12 +97,12 @@ func (cp *CompiledPolicy) EvaluateWithTimeout(claims map[string]any, tokenType s
 		val, ok := claims[key]
 		if !ok {
 			policyErr = fmt.Errorf("lua policy: claim %s missing for value check", key)
-			L.RaiseError(policyErr.Error())
+			L.RaiseError("%s", policyErr.Error())
 			return 0
 		}
 		if !luaValuesMatch(val, expected) {
 			policyErr = fmt.Errorf("lua policy: claim %s value mismatch", key)
-			L.RaiseError(policyErr.Error())
+			L.RaiseError("%s", policyErr.Error())
 		}
 		return 0
 	}))
@@ -113,7 +113,7 @@ func (cp *CompiledPolicy) EvaluateWithTimeout(claims map[string]any, tokenType s
 		val, ok := claims[key]
 		if !ok {
 			policyErr = fmt.Errorf("lua policy: claim %s missing for one_of check", key)
-			L.RaiseError(policyErr.Error())
+			L.RaiseError("%s", policyErr.Error())
 			return 0
 		}
 		found := false
@@ -124,7 +124,7 @@ func (cp *CompiledPolicy) EvaluateWithTimeout(claims map[string]any, tokenType s
 		})
 		if !found {
 			policyErr = fmt.Errorf("lua policy: claim %s value not in allowed set", key)
-			L.RaiseError(policyErr.Error())
+			L.RaiseError("%s", policyErr.Error())
 		}
 		return 0
 	}))
@@ -132,7 +132,7 @@ func (cp *CompiledPolicy) EvaluateWithTimeout(claims map[string]any, tokenType s
 	L.SetGlobal("reject", L.NewFunction(func(L *lua.LState) int {
 		msg := L.OptString(1, "rejected by lua policy")
 		policyErr = fmt.Errorf("lua policy: %s", msg)
-		L.RaiseError(policyErr.Error())
+		L.RaiseError("%s", policyErr.Error())
 		return 0
 	}))
 

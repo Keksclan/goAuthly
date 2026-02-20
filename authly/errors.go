@@ -22,4 +22,6 @@ var (
 	ErrActorNotAllowed = errors.New("actor subject not allowed")
 	// ErrLuaPolicy is returned when a Lua policy script rejects the token.
 	ErrLuaPolicy = errors.New("lua policy violation")
+	// ErrBasicAuthFailed is returned when Basic Auth credentials are invalid.
+	ErrBasicAuthFailed = errors.New("basic auth failed")
 )

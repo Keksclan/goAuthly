@@ -7,15 +7,15 @@ import (
 
 // AuthMode selects the top-level authentication mode.
 //
-// Security: Only OAuth2 is currently supported. Basic mode is reserved
-// for future work and is rejected by validation.
+// Security: OAuth2 and Basic modes are supported.
+// Mixed mode uses AuthModeOAuth2 with BasicAuth.Enabled=true on the Config.
 type AuthMode string
 
 // Supported AuthMode values.
 const (
 	// AuthModeOAuth2 enables OAuth 2.0 style verification (JWT and/or opaque introspection).
 	AuthModeOAuth2 AuthMode = "oauth2"
-	// AuthModeBasic is not supported by this library and will be rejected.
+	// AuthModeBasic enables Basic Authentication (username/password with bcrypt).
 	AuthModeBasic AuthMode = "basic"
 )
 
@@ -37,9 +37,10 @@ const (
 // Concurrency: Config is immutable after passing to New; do not mutate concurrently.
 // Security: Set Issuer/Audience and algorithms to enforce constraints.
 type Config struct {
-	Mode     AuthMode
-	OAuth2   OAuth2Config
-	Policies Policies
+	Mode      AuthMode
+	OAuth2    OAuth2Config
+	BasicAuth BasicAuthConfig
+	Policies  Policies
 }
 
 // OAuth2Config configures OAuth2 verification.
@@ -193,10 +194,18 @@ func (c *Config) setDefaults() {
 
 // Validate checks Config correctness and required fields per mode.
 func (c Config) Validate() error {
-	if c.Mode == AuthModeBasic {
-		return ErrUnsupportedMode
-	}
-	if c.Mode != AuthModeOAuth2 {
+	switch c.Mode {
+	case AuthModeBasic:
+		if !c.BasicAuth.Enabled {
+			return errors.New("basic auth mode requires BasicAuth.Enabled=true")
+		}
+		if c.BasicAuth.Validator == nil && len(c.BasicAuth.Users) == 0 {
+			return errors.New("basic auth requires Users map or Validator function")
+		}
+		return nil
+	case AuthModeOAuth2:
+		// continue to OAuth2 validation below
+	default:
 		return errors.New("unsupported or empty mode")
 	}
 	switch c.OAuth2.Mode {

@@ -163,6 +163,71 @@ Available loaders:
 - `authlyconfig.FromLuaFile(path)` — loads from a Lua file
 - `authlyconfig.FromJSONFile(path)` — loads from a JSON file
 
+## Basic Auth Configuration
+
+Basic Auth is configured directly in the `Config` struct. It does not support Lua or JSON config loading (the `Validator` function cannot be serialized).
+
+### Static Users Map
+
+```go
+import "golang.org/x/crypto/bcrypt"
+
+hash, _ := bcrypt.GenerateFromPassword([]byte("s3cret"), bcrypt.DefaultCost)
+
+cfg := authly.Config{
+    Mode: authly.AuthModeBasic,
+    BasicAuth: authly.BasicAuthConfig{
+        Enabled: true,
+        Users: map[string]string{
+            "admin": string(hash),
+        },
+        Realm: "MyAPI",
+    },
+}
+```
+
+### Custom Validator
+
+```go
+cfg := authly.Config{
+    Mode: authly.AuthModeBasic,
+    BasicAuth: authly.BasicAuthConfig{
+        Enabled: true,
+        Validator: func(ctx context.Context, user, pass string) (bool, error) {
+            return myDB.CheckCredentials(ctx, user, pass)
+        },
+    },
+}
+```
+
+### Mixed Mode (OAuth2 + Basic Auth)
+
+```go
+cfg := authly.Config{
+    Mode: authly.AuthModeOAuth2,
+    OAuth2: authly.OAuth2Config{
+        Mode:    authly.OAuth2JWTAndOpaque,
+        JWKSURL: "https://auth.example.com/.well-known/jwks.json",
+        Introspection: authly.IntrospectionConfig{
+            Endpoint: "https://auth.example.com/introspect",
+        },
+    },
+    BasicAuth: authly.BasicAuthConfig{
+        Enabled: true,
+        Users:   map[string]string{"svc": "$2a$10$..."},
+    },
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Enabled` | `bool` | `false` | Activates Basic Auth |
+| `Users` | `map[string]string` | `nil` | Username → bcrypt hash map |
+| `Validator` | `func(ctx, user, pass) (bool, error)` | `nil` | Custom credential checker (takes priority over Users) |
+| `Realm` | `string` | `"Restricted"` | WWW-Authenticate realm |
+
+See [docs/basic-auth.md](basic-auth.md) for detailed usage and security considerations.
+
 ## Token Transport Options
 
 The introspection endpoint can receive the token via body (default) or header:

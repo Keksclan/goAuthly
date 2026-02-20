@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -152,6 +153,54 @@ func TestVerify_NoPanicsWithLuaPolicy(t *testing.T) {
 	for _, tok := range malformedTokens {
 		assertNotPanics(t, func() {
 			_, _ = eng.Verify(ctx, tok)
+		})
+	}
+}
+
+func TestNoPanic_BasicAuth(t *testing.T) {
+	eng := newBasicEngine(t, authly.BasicAuthConfig{
+		Enabled: true,
+		Users: map[string]string{
+			"admin": hashPassword(t, "pass"),
+		},
+	})
+	ctx := context.Background()
+
+	edgeCases := []struct{ user, pass string }{
+		{"", ""},
+		{"admin", ""},
+		{"", "pass"},
+		{"admin", "pass"},
+		{"admin", "wrong"},
+		{"unknown", "pass"},
+		{"\x00\xff", "\x00\xff"},
+		{"admin", string(make([]byte, 10000))},
+	}
+
+	for _, tc := range edgeCases {
+		assertNotPanics(t, func() {
+			_, _ = eng.VerifyBasic(ctx, tc.user, tc.pass)
+		})
+	}
+
+	// Custom validator that returns various results
+	for _, validatorResult := range []struct {
+		ok  bool
+		err error
+	}{
+		{true, nil},
+		{false, nil},
+		{false, errors.New("boom")},
+	} {
+		vr := validatorResult
+		eng2 := newBasicEngine(t, authly.BasicAuthConfig{
+			Enabled: true,
+			Validator: func(_ context.Context, _, _ string) (bool, error) {
+				return vr.ok, vr.err
+			},
+		})
+		assertNotPanics(t, func() {
+			_, _ = eng2.VerifyBasic(ctx, "x", "y")
 		})
 	}
 }
