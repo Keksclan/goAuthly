@@ -1,62 +1,91 @@
 package tests
 
 import (
-	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"testing"
+	"time"
 
-	"github.com/keksclan/goAuthly/internal/jwk"
+	gojwt "github.com/golang-jwt/jwt/v5"
 	oauthjwt "github.com/keksclan/goAuthly/internal/oauth/jwt"
 )
-
-// auditStubKeyProvider implements jwk.Provider for test purposes.
-type auditStubKeyProvider struct{}
-
-func (s *auditStubKeyProvider) GetKey(_ context.Context, _ string) (any, error) {
-	return nil, jwk.ErrKeyNotFound
-}
-func (s *auditStubKeyProvider) LoadFromURL(_ context.Context, _ string) error { return nil }
-func (s *auditStubKeyProvider) Keys() map[string]any                          { return nil }
 
 // TestValidatorAudienceErrorsAreSentinels ensures that audience validation
 // errors returned by the internal JWT validator wrap sentinel errors so
 // callers can use errors.Is for matching.
 func TestValidatorAudienceErrorsAreSentinels(t *testing.T) {
+	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate RSA key: %v", err)
+	}
+	pubKey := &privKey.PublicKey
+	kid := "audit-key"
+
+	kp := &mockKeyProvider{keys: map[string]any{kid: pubKey}}
+
+	signToken := func(t *testing.T, aud any) string {
+		t.Helper()
+		claims := gojwt.MapClaims{
+			"iss": "https://issuer.test",
+			"sub": "user-1",
+			"exp": time.Now().Add(5 * time.Minute).Unix(),
+		}
+		if aud != nil {
+			claims["aud"] = aud
+		}
+		token := gojwt.NewWithClaims(gojwt.SigningMethodRS256, claims)
+		token.Header["kid"] = kid
+		s, err := token.SignedString(privKey)
+		if err != nil {
+			t.Fatalf("sign token: %v", err)
+		}
+		return s
+	}
+
 	tests := []struct {
 		name    string
 		rule    oauthjwt.AudienceRule
+		aud     any // audience claim value for the token
 		wantErr error
 	}{
 		{
-			name:    "ErrAudienceBlocked is a proper sentinel",
-			rule:    oauthjwt.AudienceRule{Blocklist: []string{"evil"}},
+			name:    "blocked audience wraps ErrAudienceBlocked",
+			rule:    oauthjwt.AudienceRule{AnyAudience: true, Blocklist: []string{"evil"}},
+			aud:     []string{"evil"},
 			wantErr: oauthjwt.ErrAudienceBlocked,
 		},
 		{
-			name:    "ErrAudienceNotAllowed is a proper sentinel",
-			rule:    oauthjwt.AudienceRule{AnyOf: []string{"x"}},
+			name:    "no matching anyof wraps ErrAudienceNotAllowed",
+			rule:    oauthjwt.AudienceRule{AnyOf: []string{"allowed-api"}},
+			aud:     []string{"other-api"},
+			wantErr: oauthjwt.ErrAudienceNotAllowed,
+		},
+		{
+			name:    "missing allof wraps ErrAudienceNotAllowed",
+			rule:    oauthjwt.AudienceRule{AllOf: []string{"api", "tenant"}},
+			aud:     []string{"api"},
 			wantErr: oauthjwt.ErrAudienceNotAllowed,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Verify sentinel errors are properly defined and distinguishable.
-			if tc.wantErr == nil {
-				t.Fatal("sentinel error should not be nil")
-			}
-			// Verify errors.Is works (identity check).
-			if !errors.Is(tc.wantErr, tc.wantErr) {
-				t.Error("errors.Is should match sentinel to itself")
-			}
-			// Verify the validator can be constructed with this audience rule
-			// (compilation + runtime correctness).
 			v, err := oauthjwt.New(oauthjwt.Config{
 				AudienceRule: tc.rule,
-			}, &auditStubKeyProvider{})
+			}, kp)
 			if err != nil {
 				t.Fatalf("new validator: %v", err)
 			}
-			_ = v
+
+			tokenStr := signToken(t, tc.aud)
+			_, vErr := v.Validate(t.Context(), tokenStr)
+			if vErr == nil {
+				t.Fatalf("expected error wrapping %v, got nil", tc.wantErr)
+			}
+			if !errors.Is(vErr, tc.wantErr) {
+				t.Fatalf("expected errors.Is(%v, %v) = true, got false; actual error: %v",
+					vErr, tc.wantErr, vErr)
+			}
 		})
 	}
 }
