@@ -50,6 +50,7 @@ func demoIntrospectHandler(w http.ResponseWriter, r *http.Request) {
 			"sub":    "user-456",
 			"scope":  "read",
 			"exp":    time.Now().Add(5 * time.Minute).Unix(),
+			"act":    map[string]any{"sub": "service-a"},
 		})
 		return
 	}
@@ -129,7 +130,7 @@ func main() {
 		Policies: authly.Policies{
 			TokenClaims: authly.ClaimPolicy{
 				Required:  []string{"sub"},
-				Allowlist: []string{"sub", "iss", "aud", "exp", "iat", "nbf", "scope", "act"},
+				Allowlist: []string{"sub", "iss", "aud", "exp", "iat", "nbf", "scope", "act", "active"},
 			},
 			Actor: authly.ActorPolicy{
 				Enabled:              true,
