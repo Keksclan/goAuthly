@@ -107,25 +107,22 @@ func New(cfg Config, keys jwk.Provider) (*Validator, error) {
 	}
 	v.clockSkew = cfg.ClockSkew
 
-	// Precompute parser options once.
-	v.parserOpts = []jwt.ParserOption{
-		jwt.WithLeeway(v.clockSkew),
-		jwt.WithExpirationRequired(),
-	}
-	if len(cfg.AllowedAlgs) > 0 {
-		v.parserOpts = append(v.parserOpts, jwt.WithValidMethods(cfg.AllowedAlgs))
-	}
-
-	// Precompute the effective audience rule and lookup sets.
+	// Precompute the effective audience rule (always needed).
 	v.resolveAudienceRule()
+
+	// In throughput mode, precompute parser options and audience lookup sets
+	// once at construction time to avoid repeated allocations.
+	if cfg.Mode == ValidatorModeThroughput {
+		v.parserOpts = v.buildParserOpts()
+		v.buildAudienceSets()
+	}
 
 	v.metrics = cfg.Metrics
 
 	return v, nil
 }
 
-// resolveAudienceRule precomputes the effective audience rule and builds
-// O(1) lookup sets for AnyOf, AllOf and Blocklist.
+// resolveAudienceRule normalises the effective audience rule from config.
 func (v *Validator) resolveAudienceRule() {
 	rule := v.cfg.AudienceRule
 	if audienceRuleIsZero(rule) {
@@ -136,7 +133,24 @@ func (v *Validator) resolveAudienceRule() {
 		}
 	}
 	v.audRule = rule
+}
 
+// buildParserOpts returns the jwt.ParserOption slice for this validator.
+func (v *Validator) buildParserOpts() []jwt.ParserOption {
+	opts := []jwt.ParserOption{
+		jwt.WithLeeway(v.clockSkew),
+		jwt.WithExpirationRequired(),
+	}
+	if len(v.cfg.AllowedAlgs) > 0 {
+		opts = append(opts, jwt.WithValidMethods(v.cfg.AllowedAlgs))
+	}
+	return opts
+}
+
+// buildAudienceSets creates O(1) lookup sets for AnyOf, AllOf and Blocklist.
+// Called only in throughput mode.
+func (v *Validator) buildAudienceSets() {
+	rule := v.audRule
 	if len(rule.AnyOf) > 0 {
 		v.audAnyOfSet = make(map[string]struct{}, len(rule.AnyOf))
 		for _, a := range rule.AnyOf {
@@ -159,6 +173,12 @@ func (v *Validator) resolveAudienceRule() {
 
 func (v *Validator) Validate(ctx context.Context, tokenStr string) (*Claims, error) {
 	keyfuncEmitted := false
+	// Use precomputed parser options in throughput mode; build inline otherwise.
+	parserOpts := v.parserOpts
+	if parserOpts == nil {
+		parserOpts = v.buildParserOpts()
+	}
+
 	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
 		// Algorithm check inside keyfunc as a defense-in-depth measure.
 		if v.allowedAlgSet != nil {
@@ -179,7 +199,7 @@ func (v *Validator) Validate(ctx context.Context, tokenStr string) (*Claims, err
 		}
 
 		return v.keys.GetKey(ctx, kid)
-	}, v.parserOpts...)
+	}, parserOpts...)
 
 	if err != nil {
 		// Classify the failure for metrics only when not already emitted by the keyfunc.
@@ -292,8 +312,9 @@ func audienceRuleIsZero(r AudienceRule) bool {
 	return !r.AnyAudience && len(r.AnyOf) == 0 && len(r.AllOf) == 0 && len(r.Blocklist) == 0
 }
 
-// validateAudience checks the token audiences against the precomputed rule.
-// The effective rule and lookup sets are resolved once at construction time.
+// validateAudience checks the token audiences against the configured rule.
+// In throughput mode, precomputed O(1) lookup sets are used; in standard mode,
+// linear scans are performed.
 func (v *Validator) validateAudience(tokenAud []string) error {
 	rule := v.audRule
 
@@ -302,11 +323,23 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 		return nil
 	}
 
-	// 1. Blocklist always wins — use precomputed set for O(1) lookup.
-	if len(v.audBlockSet) > 0 {
-		for _, a := range tokenAud {
-			if _, ok := v.audBlockSet[a]; ok {
-				return fmt.Errorf("audience blocked")
+	// 1. Blocklist always wins.
+	if len(rule.Blocklist) > 0 {
+		if v.audBlockSet != nil {
+			// Throughput mode: O(1) lookup via precomputed set.
+			for _, a := range tokenAud {
+				if _, ok := v.audBlockSet[a]; ok {
+					return fmt.Errorf("audience blocked")
+				}
+			}
+		} else {
+			// Standard mode: linear scan.
+			for _, a := range tokenAud {
+				for _, blocked := range rule.Blocklist {
+					if a == blocked {
+						return fmt.Errorf("audience blocked")
+					}
+				}
 			}
 		}
 	}
@@ -341,19 +374,34 @@ func (v *Validator) validateAudience(tokenAud []string) error {
 	// 4. AnyOf: at least one must be present.
 	if len(rule.AnyOf) > 0 {
 		found := false
-		// When token has few audiences, check each against precomputed set.
-		if len(tokenAud) <= len(rule.AnyOf) {
-			for _, a := range tokenAud {
-				if _, ok := v.audAnyOfSet[a]; ok {
-					found = true
-					break
+		if v.audAnyOfSet != nil {
+			// Throughput mode: use precomputed set for O(1) lookup.
+			if len(tokenAud) <= len(rule.AnyOf) {
+				for _, a := range tokenAud {
+					if _, ok := v.audAnyOfSet[a]; ok {
+						found = true
+						break
+					}
+				}
+			} else {
+				s := lazyAudSet()
+				for _, allowed := range rule.AnyOf {
+					if _, ok := s[allowed]; ok {
+						found = true
+						break
+					}
 				}
 			}
 		} else {
-			s := lazyAudSet()
-			for _, allowed := range rule.AnyOf {
-				if _, ok := s[allowed]; ok {
-					found = true
+			// Standard mode: linear scan.
+			for _, a := range tokenAud {
+				for _, allowed := range rule.AnyOf {
+					if a == allowed {
+						found = true
+						break
+					}
+				}
+				if found {
 					break
 				}
 			}
