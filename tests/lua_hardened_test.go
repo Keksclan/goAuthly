@@ -81,9 +81,9 @@ func TestLuaInfiniteLoopErrorReturnedSafely(t *testing.T) {
 	}
 }
 
-// TestLuaNoPanicPropagation verifies the panic recovery in Lua evaluation.
-func TestLuaNoPanicPropagation(t *testing.T) {
-	// A valid script that succeeds should not trigger panic recovery.
+// TestLuaNormalEvaluationSucceeds verifies that a valid script with
+// satisfied claims completes without error.
+func TestLuaNormalEvaluationSucceeds(t *testing.T) {
 	script := `require_claim("sub")`
 	cp, err := luaengine.Compile(script)
 	if err != nil {

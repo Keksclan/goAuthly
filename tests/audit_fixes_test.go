@@ -72,16 +72,3 @@ func TestAudienceSentinelErrorMessages(t *testing.T) {
 			oauthjwt.ErrAudienceNotAllowed.Error(), "audience not allowed")
 	}
 }
-
-// TestManagerTypeAssertionSafety verifies that the manager's singleflight
-// type assertion uses comma-ok pattern (fix for potential panic at manager.go:96).
-// This is a compile-time correctness test: the package must build without
-// the unchecked type assertion.
-func TestManagerTypeAssertionSafety(t *testing.T) {
-	if oauthjwt.ErrAudienceBlocked == nil {
-		t.Fatal("ErrAudienceBlocked should not be nil")
-	}
-	if oauthjwt.ErrAudienceNotAllowed == nil {
-		t.Fatal("ErrAudienceNotAllowed should not be nil")
-	}
-}

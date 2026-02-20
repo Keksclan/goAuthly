@@ -45,6 +45,11 @@ type Manager struct {
 	auth         AuthConfig
 	extraHeaders map[string]string
 	sfGroup      singleflight.Group
+
+	// fetchOverride, when non-nil, replaces fetchSet inside the singleflight
+	// closure. It exists solely as a testing seam so callers can inject a
+	// result whose dynamic type is not jwk.Set.
+	fetchOverride func(ctx context.Context, jwksURL string) (any, error)
 }
 
 func (m *Manager) SetHTTPClient(c *http.Client) {
@@ -90,12 +95,15 @@ func (m *Manager) GetKey(ctx context.Context, jwksURL, kid string) (any, error) 
 				return set, nil
 			}
 		}
+		if m.fetchOverride != nil {
+			return m.fetchOverride(ctx, jwksURL)
+		}
 		return m.fetchSet(ctx, jwksURL)
 	})
 	if fetchErr == nil {
 		set, ok := result.(jwk.Set)
 		if !ok {
-			return nil, fmt.Errorf("unexpected singleflight result type")
+			return nil, fmt.Errorf("unexpected singleflight result type %T for jwksURL=%s kid=%s", result, jwksURL, kid)
 		}
 		// store fresh and stale
 		m.cache.Set(freshKey, set, 1, m.ttl)

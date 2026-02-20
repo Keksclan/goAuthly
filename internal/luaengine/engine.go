@@ -31,12 +31,24 @@ const DefaultMaxInstructions = 1_000_000
 
 // instructionBudgetPerUnit is the approximate time budget per Lua VM instruction.
 // This converts an instruction count limit into an equivalent time deadline.
-const instructionBudgetPerUnit = 50 * time.Nanosecond
+// Derived from DefaultTimeout / DefaultMaxInstructions so the default
+// instruction budget never expires before the default timeout.
+const instructionBudgetPerUnit = DefaultTimeout / time.Duration(DefaultMaxInstructions)
+
+// maxInstructionBudget is the upper bound for instruction budget durations.
+// Any computed budget exceeding this value is capped to prevent overflow
+// (large maxInstructions values can cause time.Duration multiplication to
+// wrap negative, which would immediately cancel evaluation).
+const maxInstructionBudget = 24 * time.Hour
 
 // CompiledPolicy holds a pre-compiled Lua script for reuse across calls.
 type CompiledPolicy struct {
 	proto *lua.FunctionProto
 	mu    sync.Mutex
+
+	// panicHook, when non-nil, is called during evaluation to allow tests
+	// to inject a deliberate panic and exercise the recover guard.
+	panicHook func()
 }
 
 // Compile parses and compiles a Lua script. The result can be reused for many Evaluate calls.
@@ -62,8 +74,9 @@ func (cp *CompiledPolicy) Evaluate(claims map[string]any, tokenType string) erro
 }
 
 // EvaluateWithTimeout runs with a custom execution timeout.
+// No instruction limit is applied; use EvaluateWithLimits to set one explicitly.
 func (cp *CompiledPolicy) EvaluateWithTimeout(claims map[string]any, tokenType string, timeout time.Duration) error {
-	return cp.EvaluateWithLimits(claims, tokenType, timeout, DefaultMaxInstructions)
+	return cp.EvaluateWithLimits(claims, tokenType, timeout, 0)
 }
 
 // EvaluateWithLimits runs with a custom execution timeout and instruction limit.
@@ -83,6 +96,10 @@ func (cp *CompiledPolicy) EvaluateWithLimits(claims map[string]any, tokenType st
 		}
 	}()
 
+	if cp.panicHook != nil {
+		cp.panicHook()
+	}
+
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
 	defer L.Close()
 
@@ -97,7 +114,14 @@ func (cp *CompiledPolicy) EvaluateWithLimits(claims map[string]any, tokenType st
 	// context is an effective proxy for an instruction counter.
 	var budgetCtx context.Context
 	if maxInstructions > 0 {
+		// Guard against overflow: if maxInstructions is large enough the
+		// multiplication can wrap negative (time.Duration is int64).
+		// Cap at maxInstructionBudget so callers can't accidentally create
+		// an instant-cancel or negative-duration context.
 		instructionBudget := time.Duration(maxInstructions) * instructionBudgetPerUnit
+		if maxInstructions > int(maxInstructionBudget/instructionBudgetPerUnit) || instructionBudget <= 0 {
+			instructionBudget = maxInstructionBudget
+		}
 		if instructionBudget < timeout {
 			var budgetCancel context.CancelFunc
 			budgetCtx, budgetCancel = context.WithTimeout(ctx, instructionBudget)
